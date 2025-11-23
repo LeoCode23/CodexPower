@@ -18,7 +18,7 @@ python game.py
 - **P**: ouvrir le menu confort (ne met pas en pause mais permet d'ajuster la résolution à la souris).
 - **Ctrl+S** ou **F5**: sauvegarder dans `savegame.json`.
 - **Ctrl+L** ou **F9**: recharger la sauvegarde.
-  
+
 ## Éléments de jeu
 
 - **Ressources**: or, bois, poussière (poussière obtenue en nettoyant, bois en coupant les arbres — petit/moyen/grand arbre donnent 1/2/3 bois).
@@ -30,6 +30,7 @@ python game.py
 - **Cycle jour/nuit**: 24 minutes pour une journée complète, avec saisons et météo changeantes appliquées à l'éclairage.
 - **Sauvegarde**: `savegame.json` est chargé automatiquement au lancement et autosauvé régulièrement (et à la fermeture) avec la grille, l'inventaire, la météo, la résolution, les bûcherons, etc., pour partager la partie.
 - **Construction**: cabane (habitat), atelier (production), tour de garde (esprit protecteur) coûtent bois+or et bloquent le repoussement des arbres autour.
-- **Pixel art**: sprites maison façon Zelda-like (bûcheron allié/ennemi, arbres multi-tailles et dorés, poussière, PC, lit, constructions) et sols colorés par saison pour donner un rendu cosy immédiatement lisible.
+- **Interface**: la barre supérieure affiche désormais deux rangées d'infos (ressources, météo, saison, tâche active + compteurs bûcherons/ennemis/arbres/bâtiments/poussière) et les cases achetables voisines sont surlignées pour éviter d'"explorer" des cases isolées par erreur.
+- **Pixel art**: palette modernisée façon Zelda-like (bûcheron allié/ennemi, arbres multi-tailles et dorés, poussière, PC, lit, constructions) et sols colorés par saison pour donner un rendu cosy immédiatement lisible.
 
 Ce prototype reste compact et texturé par des rectangles/effets pixel saisonniers pour rester léger tout en posant les bases d'un système de tuiles extensible et scénarisable.

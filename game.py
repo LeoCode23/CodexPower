@@ -38,10 +38,10 @@ def make_sprite(pattern: List[str], palette: Dict[str, Tuple[int, int, int, int]
 def build_sprite_sheet() -> Dict[str, pygame.Surface]:
     palette_common = {
         ".": None,
-        "g": (78, 110, 78, 255),
-        "G": (96, 140, 96, 255),
-        "d": (220, 196, 140, 255),
-        "b": (32, 30, 26, 255),
+        "g": (70, 118, 92, 255),
+        "G": (96, 160, 128, 255),
+        "d": (224, 204, 156, 255),
+        "b": (44, 42, 38, 255),
     }
     sheet: Dict[str, pygame.Surface] = {}
 
@@ -53,20 +53,20 @@ def build_sprite_sheet() -> Dict[str, pygame.Surface]:
         "winter": ["bbbbbbbb", "bbdbbbdb", "bbbbbbbb", "bbdbbbdb", "bbbbbbbb", "bbdbbbdb", "bbbbbbbb", "bbdbbbdb"],
     }
     ground_palettes = {
-        "spring": {**palette_common, "g": (70, 112, 82, 255), "G": (86, 140, 90, 255)},
-        "summer": {**palette_common, "G": (94, 150, 90, 255), "g": (88, 132, 86, 255)},
-        "autumn": {**palette_common, "g": (122, 92, 58, 255), "G": (160, 118, 70, 255)},
-        "winter": {**palette_common, "b": (180, 188, 198, 255), "d": (216, 222, 230, 240)},
+        "spring": {**palette_common, "g": (84, 150, 108, 255), "G": (106, 176, 138, 255)},
+        "summer": {**palette_common, "G": (110, 186, 126, 255), "g": (96, 158, 114, 255)},
+        "autumn": {**palette_common, "g": (148, 112, 72, 255), "G": (190, 140, 82, 255)},
+        "winter": {**palette_common, "b": (188, 198, 216, 255), "d": (230, 236, 244, 240)},
     }
     for key, pattern in ground_patterns.items():
         sheet[f"ground_{key}"] = make_sprite(pattern, ground_palettes[key], scale=4)
 
     # Trees
     tree_pal = {
-        "t": (50, 80, 36, 255),
-        "T": (78, 122, 70, 255),
-        "L": (108, 160, 96, 255),
-        "b": (80, 56, 32, 255),
+        "t": (56, 92, 60, 255),
+        "T": (82, 138, 86, 255),
+        "L": (122, 182, 126, 255),
+        "b": (94, 70, 46, 255),
     }
     sheet["tree_small"] = make_sprite(
         ["....TT..", "...TTT..", "..TLTT..", "..TLTT..", "...TT...", "...TT...", "...TT...", "...bb..."],
@@ -147,7 +147,7 @@ def build_sprite_sheet() -> Dict[str, pygame.Surface]:
         scale=4,
     )
     sheet["enemy"] = make_sprite(
-        ["...rr...", "..rrrr..", "..rkkk..", "..rkkk..", "..rrrr..", "..bbbb..", ".bbMMbb.", "b..MM..b"],   
+        ["...rr...", "..rrrr..", "..rkkk..", "..rkkk..", "..rrrr..", "..bbbb..", ".bbMMbb.", "b..MM..b"],
         {
             "r": (140, 40, 40, 255),
             "k": (60, 60, 60, 255),
@@ -260,9 +260,9 @@ class GameState:
         self.get_tile(0, 1).special = "bed"
         self.queue_neighbors()
 
-    def get_tile(self, x: int, y: int) -> Tile:
+    def get_tile(self, x: int, y: int, create: bool = True) -> Optional[Tile]:
         tile = self.tiles.get((x, y))
-        if tile:
+        if tile or not create:
             return tile
         tile = Tile(x=x, y=y)
         self.tiles[(x, y)] = tile
@@ -508,7 +508,7 @@ class Game:
                 self.handle_click(event.pos)
 
     def handle_click(self, pos: Tuple[int, int]) -> None:
-        grid_origin = (20, 90)
+        grid_origin = (20, 120)
         x, y = pos
 
         if self.pause_menu_open:
@@ -525,7 +525,7 @@ class Game:
 
         tile_x = (x - grid_origin[0]) // TILE_SIZE
         tile_y = (y - grid_origin[1]) // TILE_SIZE
-        tile = self.state.get_tile(tile_x, tile_y)
+        tile = self.state.get_tile(tile_x, tile_y, create=False)
         if not tile:
             return
 
@@ -601,8 +601,9 @@ class Game:
             if lumberjack.chopping > 0:
                 lumberjack.chopping -= dt
                 if lumberjack.chopping <= 0 and lumberjack.target:
-                    tile = self.state.get_tile(*lumberjack.target)
-                    self.handle_chop_result(lumberjack, tile)
+                    tile = self.state.get_tile(*lumberjack.target, create=False)
+                    if tile:
+                        self.handle_chop_result(lumberjack, tile)
                 continue
 
             if lumberjack.friendly and enemies:
@@ -622,7 +623,12 @@ class Game:
                 lumberjack.y += (dy / dist) * speed * dt
                 continue
 
-            if lumberjack.target and not self.state.get_tile(*lumberjack.target).has_tree:
+            if lumberjack.target:
+                target_tile = self.state.get_tile(*lumberjack.target, create=False)
+            else:
+                target_tile = None
+
+            if lumberjack.target and (not target_tile or not target_tile.has_tree):
                 lumberjack.target = None
 
             if not lumberjack.target:
@@ -701,30 +707,46 @@ class Game:
         self.screen.blit(noise, (0, 0))
 
     def draw_header(self) -> None:
-        bar = pygame.Rect(10, 10, self.state.screen_width - 20, 64)
-        pygame.draw.rect(self.screen, (24, 32, 26), bar)
-        pygame.draw.rect(self.screen, (120, 150, 120), bar, 2)
+        bar = pygame.Rect(10, 10, self.state.screen_width - 20, 88)
+        pygame.draw.rect(self.screen, (20, 26, 32), bar, border_radius=10)
+        pygame.draw.rect(self.screen, (120, 170, 140), bar, 2, border_radius=10)
         gold = self.state.inventory["gold"]
         wood = self.state.inventory["wood"]
         dust = self.state.inventory["dust"]
-        cells = [
-            ("💰", gold, (240, 210, 80)),
-            ("🪵", wood, (180, 150, 110)),
-            ("🧹", dust, (200, 190, 150)),
-            ("⏱", f"{int(self.state.current_day_fraction()*24)}h", (180, 200, 220)),
-            ("☁", self.state.weather, (180, 220, 240)),
-            ("🍃", self.state.current_season(), (200, 200, 160)),
-            ("⚙", self.state.active_task, (200, 220, 200)),
+        friends = len([l for l in self.state.lumberjacks if l.friendly])
+        enemies = len([l for l in self.state.lumberjacks if not l.friendly])
+        trees = len([t for t in self.state.tiles.values() if t.has_tree and t.owned])
+        buildings = len([t for t in self.state.tiles.values() if t.building])
+        dust_count = len([t for t in self.state.tiles.values() if t.has_dust])
+        rows = [
+            [
+                ("💰", gold, (246, 216, 120)),
+                ("🪵", wood, (190, 164, 130)),
+                ("🧹", dust, (210, 200, 170)),
+                ("⏱", f"{int(self.state.current_day_fraction()*24)}h", (200, 220, 240)),
+                ("☁", self.state.weather, (160, 210, 230)),
+                ("🍃", self.state.current_season(), (220, 220, 180)),
+            ],
+            [
+                ("🪓", friends, (200, 230, 200)),
+                ("⚔️", enemies, (240, 150, 150)),
+                ("🌲", trees, (180, 220, 180)),
+                ("🏗️", buildings, (220, 200, 170)),
+                ("✨", dust_count, (210, 200, 240)),
+                ("⚙", self.state.active_task, (200, 230, 210)),
+            ],
         ]
-        cell_w = (bar.width - 20) // len(cells)
-        for i, (icon, text, color) in enumerate(cells):
-            rect = pygame.Rect(bar.x + 10 + i * cell_w, bar.y + 10, cell_w - 8, 44)
-            pygame.draw.rect(self.screen, (34, 48, 40), rect)
-            pygame.draw.rect(self.screen, (70, 90, 70), rect, 1)
-            label = self.big_font.render(str(icon), True, color)
-            self.screen.blit(label, (rect.x + 4, rect.y + 2))
-            value = self.font.render(str(text), True, (230, 230, 230))
-            self.screen.blit(value, (rect.x + 4, rect.y + 26))
+        row_h = 36
+        for r, cells in enumerate(rows):
+            cell_w = (bar.width - 20) // len(cells)
+            for i, (icon, text, color) in enumerate(cells):
+                rect = pygame.Rect(bar.x + 10 + i * cell_w, bar.y + 8 + r * (row_h + 4), cell_w - 8, row_h)
+                pygame.draw.rect(self.screen, (30, 40, 44), rect, border_radius=8)
+                pygame.draw.rect(self.screen, (80, 110, 100), rect, 1, border_radius=8)
+                label = self.big_font.render(str(icon), True, color)
+                self.screen.blit(label, (rect.x + 4, rect.y + 2))
+                value = self.font.render(str(text), True, (235, 235, 235))
+                self.screen.blit(value, (rect.x + 36, rect.y + 10))
 
     def toolbar_rect(self) -> pygame.Rect:
         return pygame.Rect(0, self.state.screen_height - 92, self.state.screen_width, 92)
@@ -797,7 +819,7 @@ class Game:
             scaled = pygame.transform.scale(icon, (rect.width - 12, rect.height - 12))
             self.screen.blit(scaled, (rect.x + 6, rect.y + 6))
     def draw_grid(self) -> None:
-        origin_x, origin_y = 20, 90
+        origin_x, origin_y = 20, 120
         season_key = self.season_to_key()
         for tile in sorted(self.state.tiles.values(), key=lambda t: (t.y, t.x)):
             rect = pygame.Rect(origin_x + tile.x * TILE_SIZE, origin_y + tile.y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
@@ -805,8 +827,16 @@ class Game:
             if ground:
                 self.screen.blit(ground, rect)
             if not tile.owned:
+                neighbours = [
+                    self.state.get_tile(tile.x + dx, tile.y + dy, create=False)
+                    for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1))
+                ]
+                frontier = any(n and n.owned for n in neighbours)
                 shade = pygame.Surface(rect.size, pygame.SRCALPHA)
-                shade.fill((10, 10, 10, 140))
+                shade_color = (32, 70, 60, 140) if frontier else (8, 8, 8, 160)
+                shade.fill(shade_color)
+                if frontier:
+                    pygame.draw.rect(shade, (120, 200, 180, 180), shade.get_rect(), 2)
                 self.screen.blit(shade, rect.topleft)
             pygame.draw.rect(self.screen, (30, 30, 30), rect, 1)
 
