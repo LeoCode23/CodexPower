@@ -133,6 +133,42 @@ def build_sprite_sheet() -> Dict[str, pygame.Surface]:
         {"T": (90, 120, 80, 255), "w": (200, 200, 220, 255), "b": (70, 50, 30, 255), ".": None},
         scale=4,
     )
+    # Expanded construction set
+    sheet["greenhouse"] = make_sprite(
+        ["gggggggg", "gGGGGGg", "gGwwGGg", "gGwwGGg", "gGGGGGg", "gGGGGGg", "gGGGGGg", "gggggggg"],
+        {"g": (120, 180, 120, 255), "G": (150, 210, 160, 255), "w": (210, 240, 240, 255), ".": None},
+        scale=4,
+    )
+    sheet["sawmill"] = make_sprite(
+        ["ssssssss", "sSmmSSsS", "sSmmSSsS", "sSmmSSsS", "sSSSSSSs", "sSSSSSSs", "sSSSSSSs", "bbbbbbbb"],
+        {"s": (110, 90, 70, 255), "S": (150, 120, 90, 255), "m": (220, 170, 110, 255), "b": (80, 60, 40, 255), ".": None},
+        scale=4,
+    )
+    sheet["forge"] = make_sprite(
+        ["rrrrrrrr", "rRRRRRrr", "rRkkRRrr", "rRkkRRrr", "rRRRRRrr", "rRRRRRrr", "rRRRRRrr", "bbbbbbbb"],
+        {"r": (140, 90, 80, 255), "R": (170, 120, 110, 255), "k": (90, 90, 100, 255), "b": (60, 40, 30, 255), ".": None},
+        scale=4,
+    )
+    sheet["market"] = make_sprite(
+        ["cccccccc", "cMccMcc", "cMccMcc", "cMccMcc", "cMccMcc", "cMccMcc", "cMccMcc", "bbbbbbbb"],
+        {"c": (150, 120, 100, 255), "M": (210, 180, 90, 255), "b": (70, 50, 40, 255), ".": None},
+        scale=4,
+    )
+    sheet["barracks"] = make_sprite(
+        ["bbbbbbbb", "bBBbBBb", "bBBbBBb", "bBBbBBb", "bBBbBBb", "bBBbBBb", "bBBbBBb", "bbbbbbbb"],
+        {"b": (80, 90, 120, 255), "B": (110, 140, 180, 255), ".": None},
+        scale=4,
+    )
+    sheet["statue"] = make_sprite(
+        ["..ss..", ".sSSs.", "sSSSSs", "sSSSSs", ".sSSs.", "..ss.."],
+        {"s": (200, 200, 210, 255), "S": (230, 230, 240, 255), ".": None},
+        scale=8,
+    )
+    sheet["garden"] = make_sprite(
+        ["..g..", ".gFg.", "gFFFg", ".gFg.", "..g..", "..g.."],
+        {"g": (90, 150, 110, 255), "F": (200, 140, 150, 255), ".": None},
+        scale=8,
+    )
     # Storage barrels by tier
     barrel_palettes = [
         {"o": (160, 100, 60, 255), "O": (190, 140, 90, 255), ".": None},
@@ -357,6 +393,12 @@ class GameState:
         self.event_timer = 0.0
         self.task_board: List[Task] = []
         self.storage_tier = 1
+        self.helper_npc: Optional[Tuple[int, int]] = None
+        self.side_quests: List[Quest] = []
+        self.tree_growth_bonus = 0.0
+        self.wood_bonus = 0.0
+        self.sell_bonus = 0.0
+        self.ai_speed_bonus = 0.0
         self.camera_offset = [0, 0]
         self.quest_npc: Optional[Tuple[int, int]] = None
         self.quests: List[Quest] = []
@@ -365,7 +407,8 @@ class GameState:
         self.active_task = "Chargement auto" if SAVE_FILE.exists() else "Nouvelle partie"
 
     def recompute_storage_capacity(self) -> None:
-        self.gold_max = 50 + self.storage_tier * 40
+        barrel_capacity = sum(t.building_tier * 50 for t in self.tiles.values() if t.building == "barrel")
+        self.gold_max = 60 + barrel_capacity
 
     def load_or_init_tiles(self) -> None:
         if SAVE_FILE.exists():
@@ -385,10 +428,19 @@ class GameState:
         self.get_tile(0, 1).special = "bed"
         self.quest_npc = (2, 2)
         self.get_tile(*self.quest_npc).special = "quest"
+        self.helper_npc = (-2, 1)
+        self.get_tile(*self.helper_npc).special = "guide"
         self.quests = [
             Quest("Bûcheron en herbe", {"cut_tree": 10}, {"gold": 10, "wood": 5}),
             Quest("Nettoyage du camp", {"clean_dust": 20}, {"gold": 12}),
             Quest("Architecte", {"build_cabin": 3}, {"gold": 18, "wood": 6}),
+            Quest("Gardien du savoir", {"upgrade_building": 4}, {"gold": 24}),
+            Quest("Capitaine", {"recruit_friend": 2}, {"wood": 8, "gold": 16}),
+        ]
+        self.side_quests = [
+            Quest("Couper la forêt", {"cut_tree": 25}, {"gold": 30, "wood": 10}),
+            Quest("Nouvelle flore", {"plant_tree": 12}, {"gold": 16}),
+            Quest("Artisanat", {"build_workshop": 2}, {"gold": 22}),
         ]
         self.active_quest = self.quests[0]
         self.recompute_storage_capacity()
@@ -428,7 +480,8 @@ class GameState:
                 continue
             if not tile.owned:
                 continue
-            tile.tree_growth = min(1.0, tile.tree_growth + dt / 60)
+            bonus = 1.0 + self.tree_growth_bonus
+            tile.tree_growth = min(1.0, tile.tree_growth + (dt / 60) * bonus)
             if tile.tree_growth >= 1.0 and random.random() < 0.04:
                 tile.has_tree = True
                 tile.tree_type = random.choices(["small", "medium", "large"], weights=[0.5, 0.35, 0.15])[0]
@@ -439,6 +492,7 @@ class GameState:
         if self.season_time % SEASON_LENGTH_SECONDS < dt:
             self.roll_weather()
         self.maintain_buildings(dt)
+        self.apply_building_effects()
 
     def update_events(self, dt: float) -> None:
         self.event_timer += dt
@@ -455,6 +509,7 @@ class GameState:
         tile.event = event
         if event == "ami_bucheron":
             self.lumberjacks.append(Lumberjack(tile.x + 0.1, tile.y + 0.1))
+            self.progress_quest("recruit_friend")
         elif event == "ennemi":
             self.lumberjacks.append(Lumberjack(tile.x + 0.1, tile.y + 0.1, friendly=False, health=2))
         elif event == "arbre_or":
@@ -476,27 +531,47 @@ class GameState:
         options = ["Soleil", "Pluie", "Neige", "Brouillard"]
         self.weather = random.choice(options)
 
+    def apply_building_effects(self) -> None:
+        self.tree_growth_bonus = 0.0
+        self.wood_bonus = 0.0
+        self.sell_bonus = 0.0
+        self.ai_speed_bonus = 0.0
+        for tile in self.tiles.values():
+            if not tile.building:
+                continue
+            tier = max(1, tile.building_tier)
+            if tile.building == "greenhouse":
+                self.tree_growth_bonus += 0.02 * tier
+            elif tile.building == "sawmill":
+                self.wood_bonus += 0.1 * tier
+            elif tile.building == "market":
+                self.sell_bonus += 0.05 * tier
+            elif tile.building == "barracks":
+                self.ai_speed_bonus += 0.03 * tier
+            elif tile.building == "statue":
+                self.ai_speed_bonus += 0.02 * tier
+        self.ai_speed_bonus = min(self.ai_speed_bonus, 0.8)
+
     def progress_quest(self, key: str) -> None:
-        if not self.active_quest or self.active_quest.completed:
-            return
-        current = self.active_quest.progress.get(key, 0)
-        target = self.active_quest.objectives.get(key)
-        if target is None:
-            return
-        self.active_quest.progress[key] = min(target, current + 1)
-        if all(self.active_quest.progress.get(k, 0) >= v for k, v in self.active_quest.objectives.items()):
-            self.active_quest.completed = True
-            for resource, amount in self.active_quest.rewards.items():
-                if resource == "gold":
-                    self.inventory[resource] = min(self.gold_max, self.inventory.get(resource, 0) + amount)
-                else:
-                    self.inventory[resource] = self.inventory.get(resource, 0) + amount
-            self.active_task = f"Quête terminée: {self.active_quest.name}"
-            # advance to next quest
-            for quest in self.quests:
-                if not quest.completed:
-                    self.active_quest = quest
-                    break
+        targets = [q for q in ([self.active_quest] + self.side_quests) if q and not q.completed]
+        for quest in targets:
+            current = quest.progress.get(key, 0)
+            target = quest.objectives.get(key)
+            if target is None:
+                continue
+            quest.progress[key] = min(target, current + 1)
+            if all(quest.progress.get(k, 0) >= v for k, v in quest.objectives.items()):
+                quest.completed = True
+                for resource, amount in quest.rewards.items():
+                    if resource == "gold":
+                        self.inventory[resource] = min(self.gold_max, self.inventory.get(resource, 0) + amount)
+                    else:
+                        self.inventory[resource] = self.inventory.get(resource, 0) + amount
+                self.active_task = f"Quête terminée: {quest.name}"
+        for quest in self.quests:
+            if not quest.completed:
+                self.active_quest = quest
+                break
 
     def maintain_buildings(self, dt: float) -> None:
         for tile in self.tiles.values():
@@ -528,6 +603,7 @@ class GameState:
         tile.has_tree = False
         tile.tree_growth = 0.0
         wood_gain = {"small": 1, "medium": 2, "large": 3}.get(tile.tree_type, 1)
+        wood_gain = int(math.ceil(wood_gain * (1.0 + self.wood_bonus)))
         self.inventory["wood"] += wood_gain
         self.active_task = "Bûcheronnage"
         self.progress_quest("cut_tree")
@@ -549,12 +625,19 @@ class GameState:
             "color_tile": (0, 1),
             "cabane_t2": (8, 14),
             "cabane_t3": (10, 18),
+            "greenhouse": (6, 8),
+            "sawmill": (8, 12),
+            "forge": (10, 14),
+            "market": (10, 18),
+            "barracks": (12, 16),
+            "statue": (4, 12),
+            "garden": (3, 6),
         }
         need_wood, need_gold = base_cost.get(building, (0, 0))
         if self.inventory["wood"] < need_wood or self.inventory["gold"] < need_gold:
             return
         if building == "barrel" and tile.building == "barrel":
-            tile.building_tier = min(3, tile.building_tier + 1)
+            tile.building_tier += 1
         else:
             if tile.building:
                 return
@@ -568,12 +651,44 @@ class GameState:
         self.active_task = f"Construit {building}"
         if building.startswith("cabane"):
             self.progress_quest("build_cabin")
+        if building == "atelier":
+            self.progress_quest("build_workshop")
         if building == "barrel":
             self.storage_tier = max(self.storage_tier, tile.building_tier)
             self.recompute_storage_capacity()
 
+    def upgrade_building(self, tile: Tile) -> None:
+        if not tile.building:
+            return
+        if tile.building_tier >= 12:
+            return
+        cost_wood = 2 + tile.building_tier * 2
+        cost_gold = 4 + tile.building_tier * 3
+        if self.inventory["wood"] < cost_wood or self.inventory["gold"] < cost_gold:
+            return
+        self.inventory["wood"] -= cost_wood
+        self.inventory["gold"] -= cost_gold
+        tile.building_tier += 1
+        tile.damage = max(0.0, tile.damage - 0.1)
+        tile.building_progress = min(1.0, tile.building_progress + 0.2)
+        self.active_task = f"Amélioration niveau {tile.building_tier}"
+        if tile.building == "barrel":
+            self.recompute_storage_capacity()
+        self.progress_quest("upgrade_building")
+
+    def destroy_building(self, tile: Tile) -> None:
+        if not tile.building:
+            return
+        tile.building = None
+        tile.building_tier = 1
+        tile.damage = 0.0
+        tile.building_progress = 1.0
+        tile.has_dust = False
+        self.active_task = "Bâtiment détruit"
+
     def sell_resources(self) -> None:
-        gained = self.inventory["wood"] * 4 + self.inventory["dust"] * 2
+        multiplier = 1.0 + self.sell_bonus
+        gained = int((self.inventory["wood"] * 4 + self.inventory["dust"] * 2) * multiplier)
         self.add_gold(gained)
         self.inventory["wood"] = 0
         self.inventory["dust"] = 0
@@ -613,6 +728,8 @@ class GameState:
             "quests": [q.to_dict() for q in self.quests],
             "active_quest": self.active_quest.to_dict() if self.active_quest else None,
             "quest_npc": self.quest_npc,
+            "helper_npc": self.helper_npc,
+            "side_quests": [q.to_dict() for q in self.side_quests],
         }
         SAVE_FILE.write_text(json.dumps(data, indent=2))
 
@@ -643,6 +760,12 @@ class GameState:
             self.active_quest = Quest.from_dict(active_quest_data)
         elif self.quests:
             self.active_quest = self.quests[0]
+        self.helper_npc = tuple(data.get("helper_npc")) if data.get("helper_npc") else self.helper_npc
+        self.side_quests = [Quest.from_dict(q) for q in data.get("side_quests", [])] or self.side_quests
+        if self.quest_npc:
+            self.get_tile(*self.quest_npc).special = "quest"
+        if self.helper_npc:
+            self.get_tile(*self.helper_npc).special = "guide"
         self.recompute_storage_capacity()
         self.queue_neighbors()
 
@@ -665,10 +788,15 @@ class GameState:
     def queue_neighbors(self) -> None:
         # always create a one-tile buffer around owned land for infinite feel
         owned_coords = [(t.x, t.y) for t in self.owned_tiles()]
-        for x, y in owned_coords:
-            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-                nx, ny = x + dx, y + dy
-                self.get_tile(nx, ny)
+        if not owned_coords:
+            return
+        min_x = min(x for x, _ in owned_coords)
+        max_x = max(x for x, _ in owned_coords)
+        min_y = min(y for _, y in owned_coords)
+        max_y = max(y for _, y in owned_coords)
+        for x in range(min_x - 8, max_x + 9):
+            for y in range(min_y - 8, max_y + 9):
+                self.get_tile(x, y)
 
     def apply_unlock_event(self, tile: Tile) -> None:
         story_events = {
@@ -681,6 +809,7 @@ class GameState:
 
         if tile.event == "ami_bucheron":
             self.lumberjacks.append(Lumberjack(tile.x + 0.2, tile.y + 0.2))
+            self.progress_quest("recruit_friend")
         elif tile.event == "arbre_or":
             tile.has_tree = True
             tile.tree_type = "large"
@@ -761,6 +890,7 @@ class Game:
         self.big_font = pygame.font.SysFont("arial", 24)
         self.running = True
         self.last_click: Optional[Tile] = None
+        self.inspector_rects: Dict[str, pygame.Rect] = {}
         self.pause_menu_open = False
         self.animation_timer = 0.0
         self.autosave_timer = 0.0
@@ -775,6 +905,13 @@ class Game:
             "color_tile",
             "cabane_t2",
             "cabane_t3",
+            "greenhouse",
+            "sawmill",
+            "forge",
+            "market",
+            "barracks",
+            "statue",
+            "garden",
         ]
         self.state.save_game()
 
@@ -815,6 +952,9 @@ class Game:
         grid_origin = (20 + int(self.state.camera_offset[0]), 120 + int(self.state.camera_offset[1]))
         x, y = pos
 
+        if self.last_click and self.handle_inspector_click(pos):
+            return
+
         if self.pause_menu_open:
             if self.handle_pause_click(pos):
                 return
@@ -846,15 +986,33 @@ class Game:
                 self.state.active_task = "Quêtes: tout est fini !"
             elif self.state.active_quest:
                 self.state.active_task = f"Quête en cours: {self.state.active_quest.name}"
+            for quest in self.state.quests:
+                if quest.completed:
+                    continue
+                self.state.active_quest = quest
+                break
+            self.last_click = tile
+            return
+        if tile.special == "guide":
+            for quest in self.state.side_quests:
+                if not quest.completed:
+                    self.state.active_quest = quest
+                    self.state.active_task = f"Quête annexe: {quest.name}"
+                    break
+            else:
+                self.state.active_task = "Guide: continue !"
+            self.last_click = tile
             return
 
         if self.state.active_tool == "broom":
             self.state.clean_tile(tile)
+            self.last_click = tile
             return
 
         if self.state.active_tool == "build":
             building = self.build_palette[self.state.build_selection % len(self.build_palette)]
             self.state.place_building(tile, building)
+            self.last_click = tile
             return
 
         if tile.has_tree and not tile.has_dust:
@@ -862,7 +1020,7 @@ class Game:
             return
 
         self.state.buy_tile(tile)
-        self.last_click = tile
+        self.last_click = tile if tile.owned or tile.building else None
 
     def handle_resolution_click(self, pos: Tuple[int, int]) -> None:
         x, y = pos
@@ -906,8 +1064,16 @@ class Game:
             self.state.camera_offset[1] += speed
         if keys[pygame.K_DOWN] or keys[pygame.K_s]:
             self.state.camera_offset[1] -= speed
-        self.state.camera_offset[0] = max(-160, min(160, self.state.camera_offset[0]))
-        self.state.camera_offset[1] = max(-160, min(160, self.state.camera_offset[1]))
+        all_tiles = list(self.state.tiles.values())
+        if all_tiles:
+            min_x = min(t.x for t in all_tiles) - 6
+            max_x = max(t.x for t in all_tiles) + 6
+            min_y = min(t.y for t in all_tiles) - 6
+            max_y = max(t.y for t in all_tiles) + 6
+            max_offset_x = (max_x - min_x) * TILE_SIZE
+            max_offset_y = (max_y - min_y) * TILE_SIZE
+            self.state.camera_offset[0] = max(-max_offset_x, min(max_offset_x, self.state.camera_offset[0]))
+            self.state.camera_offset[1] = max(-max_offset_y, min(max_offset_y, self.state.camera_offset[1]))
 
     def update_lumberjacks(self, dt: float) -> None:
         enemies = [l for l in self.state.lumberjacks if not l.friendly]
@@ -938,7 +1104,7 @@ class Game:
                 dx = target_enemy.x - lumberjack.x
                 dy = target_enemy.y - lumberjack.y
                 dist = math.hypot(dx, dy)
-                speed = 1.4
+                speed = 1.4 * (1.0 + self.state.ai_speed_bonus)
                 if dist < 0.1:
                     target_enemy.health -= dt * 3
                     if target_enemy.health <= 0:
@@ -974,7 +1140,7 @@ class Game:
             dx = tx - lumberjack.x
             dy = ty - lumberjack.y
             dist = math.hypot(dx, dy)
-            speed = 1.0 + task.weight * 0.2
+            speed = (1.0 + task.weight * 0.2) * (1.0 + self.state.ai_speed_bonus)
             if dist > 0.05:
                 lumberjack.x += (dx / max(dist, 0.001)) * speed * dt
                 lumberjack.y += (dy / max(dist, 0.001)) * speed * dt
@@ -1047,12 +1213,7 @@ class Game:
         if task.kind == "haul_storage":
             task.progress += dt
             if task.progress >= task.duration:
-                delivered_wood = min(3, self.state.inventory.get("wood", 0))
-                delivered_dust = min(2, self.state.inventory.get("dust", 0))
-                self.state.inventory["wood"] -= delivered_wood
-                self.state.inventory["dust"] -= delivered_dust
-                self.state.add_gold(delivered_wood + delivered_dust)
-                self.state.active_task = "Ravitaille au dépôt"
+                self.state.active_task = "Ravitaillement (stock)"
                 lumberjack.current_task = None
             return
 
@@ -1072,6 +1233,7 @@ class Game:
                 if tile.tree_growth >= 1.0:
                     tile.has_tree = True
                     tile.tree_type = "small"
+                    self.state.progress_quest("plant_tree")
                 self.state.active_task = "Entretien des sols"
                 lumberjack.current_task = None
             return
@@ -1098,8 +1260,10 @@ class Game:
         self.screen.fill((40, 44, 52))
         self.draw_background_overlay()
         self.draw_grid()
+        self.draw_quest_tracker()
         # HUD pass drawn last
         self.draw_header()
+        self.draw_tile_inspector()
         self.draw_toolbar()
         if self.state.selling_dialog:
             self.draw_sell_dialog()
@@ -1194,6 +1358,64 @@ class Game:
                     self.screen.blit(label, (rect.x + 4, rect.y + 2))
                 value = self.font.render(str(text), True, (235, 235, 235))
                 self.screen.blit(value, (rect.x + 36, rect.y + 10))
+
+    def draw_quest_tracker(self) -> None:
+        panel = pygame.Rect(self.state.screen_width - 260, 110, 240, 150)
+        pygame.draw.rect(self.screen, (28, 36, 42), panel, border_radius=10)
+        pygame.draw.rect(self.screen, (120, 170, 180), panel, 2, border_radius=10)
+        title = self.big_font.render("Quêtes", True, (230, 230, 230))
+        self.screen.blit(title, (panel.x + 12, panel.y + 10))
+        quests = [self.state.active_quest] + [q for q in self.state.side_quests if not q.completed]
+        quests = [q for q in quests if q]
+        self.inspector_rects = {k: v for k, v in self.inspector_rects.items() if k not in ("upgrade", "destroy", "close")}
+        y_offset = panel.y + 40
+        for quest in quests[:2]:
+            name = self.font.render(quest.name + (" ✅" if quest.completed else ""), True, (220, 230, 240))
+            self.screen.blit(name, (panel.x + 12, y_offset))
+            y_offset += 20
+            for key, target in quest.objectives.items():
+                current = quest.progress.get(key, 0)
+                line = self.font.render(f"- {key}: {current}/{target}", True, (200, 210, 210))
+                self.screen.blit(line, (panel.x + 16, y_offset))
+                y_offset += 18
+            y_offset += 4
+
+    def draw_tile_inspector(self) -> None:
+        if not self.last_click or not self.last_click.owned:
+            self.inspector_rects = {k: v for k, v in self.inspector_rects.items() if k not in ("upgrade", "destroy", "close")}
+            return
+        tile = self.last_click
+        panel = pygame.Rect(20, self.state.screen_height - 210, 240, 190)
+        pygame.draw.rect(self.screen, (30, 46, 38), panel, border_radius=10)
+        pygame.draw.rect(self.screen, (150, 210, 170), panel, 2, border_radius=10)
+        title = self.big_font.render(f"Case ({tile.x},{tile.y})", True, (230, 230, 230))
+        self.screen.blit(title, (panel.x + 12, panel.y + 10))
+        info_lines = [
+            f"Bâtiment: {tile.building or 'aucun'}",
+            f"Niveau: {tile.building_tier}",
+            f"Progression: {int(tile.building_progress * 100)}%",
+        ]
+        for i, text in enumerate(info_lines):
+            surf = self.font.render(text, True, (220, 230, 220))
+            self.screen.blit(surf, (panel.x + 12, panel.y + 44 + i * 20))
+        self.inspector_rects = {k: v for k, v in self.inspector_rects.items() if k in ("upgrade", "destroy", "close")}
+        if tile.building:
+            upgrade = pygame.Rect(panel.x + 12, panel.bottom - 60, 96, 36)
+            destroy = pygame.Rect(panel.x + 132, panel.bottom - 60, 96, 36)
+            pygame.draw.rect(self.screen, (90, 150, 90), upgrade, border_radius=8)
+            pygame.draw.rect(self.screen, (150, 90, 90), destroy, border_radius=8)
+            self.screen.blit(self.font.render("Upgrade", True, (20, 30, 20)), (upgrade.x + 12, upgrade.y + 8))
+            self.screen.blit(self.font.render("Détruire", True, (20, 30, 20)), (destroy.x + 8, destroy.y + 8))
+            self.inspector_rects = {
+                "upgrade": upgrade,
+                "destroy": destroy,
+                "close": pygame.Rect(panel.right - 28, panel.y + 8, 20, 20),
+            }
+            close_rect = self.inspector_rects["close"]
+            pygame.draw.rect(self.screen, (120, 120, 120), close_rect)
+            self.screen.blit(self.font.render("X", True, (10, 10, 10)), (close_rect.x + 4, close_rect.y + 2))
+        else:
+            self.inspector_rects = {"close": pygame.Rect(panel.right - 28, panel.y + 8, 20, 20)}
 
     def toolbar_rect(self) -> pygame.Rect:
         return pygame.Rect(0, self.state.screen_height - 92, self.state.screen_width, 92)
@@ -1300,6 +1522,10 @@ class Game:
                 npc = self.sprites.get("lumberjack")
                 if npc:
                     self.screen.blit(npc, rect)
+            elif tile.special == "guide":
+                guide = self.sprites.get("enemy")
+                if guide:
+                    self.screen.blit(guide, rect)
 
             if tile.building:
                 key_map = {
@@ -1308,11 +1534,18 @@ class Game:
                     "cabane_t3": "cabin",
                     "atelier": "workshop",
                     "tour": "watch",
-                    "barrel": f"barrel_t{tile.building_tier}",
+                    "barrel": f"barrel_t{min(tile.building_tier,3)}",
                     "fence": "fence",
                     "flower": "flower",
                     "fountain": "fountain",
                     "color_tile": "color_tile",
+                    "greenhouse": "greenhouse",
+                    "sawmill": "sawmill",
+                    "forge": "forge",
+                    "market": "market",
+                    "barracks": "barracks",
+                    "statue": "statue",
+                    "garden": "garden",
                 }
                 key = key_map.get(tile.building)
                 sprite = self.sprites.get(key) if key else None
@@ -1329,6 +1562,13 @@ class Game:
                         (220, 200, 90),
                         (gauge.x, gauge.y, int(gauge.width * fill), gauge.height),
                     )
+                tint = pygame.Surface(rect.size, pygame.SRCALPHA)
+                tier_strength = min(12, tile.building_tier)
+                tint_color = (60 + tier_strength * 10, 80 + tier_strength * 6, 40 + tier_strength * 4, 70)
+                tint.fill(tint_color)
+                self.screen.blit(tint, rect.topleft)
+                lvl = self.font.render(f"Lv{tile.building_tier}", True, (255, 255, 255))
+                self.screen.blit(lvl, (rect.x + 4, rect.y + 4))
 
             if tile.has_tree:
                 self.draw_tree(rect, tile)
@@ -1362,6 +1602,18 @@ class Game:
         if sprite:
             small = pygame.transform.scale(sprite, (rect.width - 8, rect.height - 8))
             self.screen.blit(small, (rect.x + 4, rect.y + 4))
+
+    def handle_inspector_click(self, pos: Tuple[int, int]) -> bool:
+        for action, rect in self.inspector_rects.items():
+            if rect.collidepoint(pos) and self.last_click:
+                if action == "upgrade":
+                    self.state.upgrade_building(self.last_click)
+                elif action == "destroy":
+                    self.state.destroy_building(self.last_click)
+                elif action == "close":
+                    self.last_click = None
+                return True
+        return False
 
     def draw_lumberjacks(self, origin_x: int, origin_y: int) -> None:
         for lumberjack in self.state.lumberjacks:
