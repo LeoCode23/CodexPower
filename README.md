@@ -18,7 +18,7 @@ python game.py
 - **P**: ouvrir le menu confort (ne met pas en pause mais permet d'ajuster la résolution à la souris).
 - **Ctrl+S** ou **F5**: sauvegarder dans `savegame.json`.
 - **Ctrl+L** ou **F9**: recharger la sauvegarde.
-
+  
 ## Éléments de jeu
 
 - **Ressources**: or, bois, poussière (poussière obtenue en nettoyant, bois en coupant les arbres — petit/moyen/grand arbre donnent 1/2/3 bois).

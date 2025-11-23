@@ -147,7 +147,7 @@ def build_sprite_sheet() -> Dict[str, pygame.Surface]:
         scale=4,
     )
     sheet["enemy"] = make_sprite(
-        ["...rr...", "..rrrr..", "..rkkk..", "..rkkk..", "..rrrr..", "..bbbb..", ".bbMMbb.", "b..MM..b"],
+        ["...rr...", "..rrrr..", "..rkkk..", "..rkkk..", "..rrrr..", "..bbbb..", ".bbMMbb.", "b..MM..b"],   
         {
             "r": (140, 40, 40, 255),
             "k": (60, 60, 60, 255),
