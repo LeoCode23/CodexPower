@@ -18,6 +18,130 @@ SAVE_FILE = Path("savegame.json")
 SMALL_CHOP = 5.0
 MEDIUM_CHOP = 7.0
 LARGE_CHOP = 10.0
+AUTOSAVE_EVERY = 60.0
+
+
+def make_sprite(pattern: List[str], palette: Dict[str, Tuple[int, int, int, int]], scale: int = 2) -> pygame.Surface:
+    height = len(pattern)
+    width = len(pattern[0]) if height else 0
+    surf = pygame.Surface((width, height), pygame.SRCALPHA)
+    for y, line in enumerate(pattern):
+        for x, key in enumerate(line):
+            color = palette.get(key)
+            if color:
+                surf.set_at((x, y), color)
+    if scale != 1:
+        surf = pygame.transform.scale(surf, (width * scale, height * scale))
+    return surf
+
+
+def build_sprite_sheet() -> Dict[str, pygame.Surface]:
+    palette_common = {
+        ".": None,
+        "g": (78, 110, 78, 255),
+        "G": (96, 140, 96, 255),
+        "d": (220, 196, 140, 255),
+        "b": (32, 30, 26, 255),
+    }
+    sheet: Dict[str, pygame.Surface] = {}
+
+    # Ground tiles by season (spring/summer/autumn/winter)
+    ground_patterns = {
+        "spring": ["gggggggg", "ggGggGgg", "gggggggg", "gGgggggg", "ggggGggg", "gggggggg", "gGgggggg", "gggggggg"],
+        "summer": ["GGGGGGGG", "GGGgGGGG", "GGGGGGGG", "GGGGgGGG", "GGGGGGGG", "GGGgGGGG", "GGGGGGGG", "GGGGGGGG"],
+        "autumn": ["gggggggg", "gGgggggg", "gggGGggg", "gggggggg", "gggGGggg", "gggggggg", "gGgggggg", "gggggggg"],
+        "winter": ["bbbbbbbb", "bbdbbbdb", "bbbbbbbb", "bbdbbbdb", "bbbbbbbb", "bbdbbbdb", "bbbbbbbb", "bbdbbbdb"],
+    }
+    ground_palettes = {
+        "spring": {**palette_common, "g": (70, 112, 82, 255), "G": (86, 140, 90, 255)},
+        "summer": {**palette_common, "G": (94, 150, 90, 255), "g": (88, 132, 86, 255)},
+        "autumn": {**palette_common, "g": (122, 92, 58, 255), "G": (160, 118, 70, 255)},
+        "winter": {**palette_common, "b": (180, 188, 198, 255), "d": (216, 222, 230, 240)},
+    }
+    for key, pattern in ground_patterns.items():
+        sheet[f"ground_{key}"] = make_sprite(pattern, ground_palettes[key], scale=4)
+
+    # Trees
+    tree_pal = {
+        "t": (50, 80, 36, 255),
+        "T": (78, 122, 70, 255),
+        "L": (108, 160, 96, 255),
+        "b": (80, 56, 32, 255),
+    }
+    sheet["tree_small"] = make_sprite(
+        ["....TT..", "...TTT..", "..TLTT..", "..TLTT..", "...TT...", "...TT...", "...TT...", "...bb..."],
+        tree_pal,
+        scale=4,
+    )
+    sheet["tree_medium"] = make_sprite(
+        ["...TTTT.", "..TLTTT.", "..TLTTT.", ".TTLTTT.", ".TLTTTT.", "..TTTT..", "...TT...", "...bb..."],
+        tree_pal,
+        scale=4,
+    )
+    sheet["tree_large"] = make_sprite(
+        ["..TTTTT.", ".TLTTTTT", ".TLTTTTT", "TLTTTTT.", "TLTTTTT.", "TLTTTTT.", ".TTTTTT.", "..bbbb.."],
+        tree_pal,
+        scale=4,
+    )
+    sheet["tree_gold"] = make_sprite(
+        ["..YYYY..", ".YYYYYY.", ".YhYYYh.", "YYYYYYYY", "YhYYYhYY", "YYYYYYYY", ".YYYYYY.", "..bbbb.."],
+        {
+            "Y": (228, 196, 72, 255),
+            "h": (244, 220, 120, 255),
+            "b": (120, 90, 40, 255),
+            ".": None,
+        },
+        scale=4,
+    )
+
+    # Dust
+    sheet["dust"] = make_sprite(
+        ["..aa....", ".aaaa..", "aaaaaa.", "aaaaaa.", ".aaaa..", "..aa....", "..aa....", "........"],
+        {"a": (210, 190, 150, 200), ".": None},
+        scale=4,
+    )
+
+    # Structures
+    sheet["bed"] = make_sprite(
+        ["rrrrrr..", "rwwww..", "rwwww..", "rwwww..", "rwwww..", "rwwww..", "rrrrrr..", "rrrrrr.."],
+        {"r": (200, 168, 120, 255), "w": (240, 240, 240, 255), ".": None},
+        scale=4,
+    )
+    sheet["pc"] = make_sprite(
+        ["BBBB....", "BccB....", "BccB....", "BccB....", "BccB....", "BccB....", "BBBB....", "BBBB...."],
+        {
+            "B": (120, 180, 220, 255),
+            "c": (70, 90, 120, 255),
+            ".": None,
+        },
+        scale=4,
+    )
+
+    # Characters
+    sheet["lumberjack"] = make_sprite(
+        ["...rr...", "..rrrr..", "..rRRr..", "..rRRr..", "..rrrr..", "..bbbb..", ".bbMMbb.", "b..MM..b"],
+        {
+            "r": (196, 70, 60, 255),
+            "R": (220, 120, 110, 255),
+            "b": (80, 50, 30, 255),
+            "M": (80, 110, 180, 255),
+            ".": None,
+        },
+        scale=4,
+    )
+    sheet["enemy"] = make_sprite(
+        ["...rr...", "..rrrr..", "..rkkk..", "..rkkk..", "..rrrr..", "..bbbb..", ".bbMMbb.", "b..MM..b"],
+        {
+            "r": (140, 40, 40, 255),
+            "k": (60, 60, 60, 255),
+            "b": (60, 36, 24, 255),
+            "M": (190, 120, 40, 255),
+            ".": None,
+        },
+        scale=4,
+    )
+
+    return sheet
 
 
 @dataclass
@@ -68,6 +192,7 @@ class GameState:
         self.selling_dialog = False
         self.pending_sale: Optional[dict] = None
         self.load_or_init_tiles()
+        self.active_task = "Chargement auto" if SAVE_FILE.exists() else "Nouvelle partie"
 
     def load_or_init_tiles(self) -> None:
         if SAVE_FILE.exists():
@@ -234,6 +359,7 @@ class GameState:
             tile.tree_type = "large"
         elif tile.event == "ennemi":
             tile.has_dust = True
+            self.lumberjacks.append(Lumberjack(tile.x + 0.2, tile.y + 0.2, friendly=False))
 
 
 class Game:
@@ -241,6 +367,7 @@ class Game:
         pygame.init()
         pygame.display.set_caption("Retraite Rustique")
         self.state = GameState((960, 720))
+        self.sprites = build_sprite_sheet()
         self.screen = pygame.display.set_mode((self.state.screen_width, self.state.screen_height))
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont("arial", 18)
@@ -249,6 +376,8 @@ class Game:
         self.last_click: Optional[Tile] = None
         self.pause_menu_open = False
         self.animation_timer = 0.0
+        self.autosave_timer = 0.0
+        self.state.save_game()
 
     def adjust_resolution(self, dx: int, dy: int) -> None:
         self.state.screen_width = max(640, self.state.screen_width + dx)
@@ -350,6 +479,11 @@ class Game:
         self.state.update_time(dt)
         self.update_lumberjacks(dt)
         self.animation_timer += dt
+        self.autosave_timer += dt
+        if self.autosave_timer >= AUTOSAVE_EVERY:
+            self.state.save_game()
+            self.autosave_timer = 0.0
+            self.state.active_task = "Autosave"
 
     def update_lumberjacks(self, dt: float) -> None:
         targets = [t for t in self.state.tiles.values() if t.has_tree and not t.has_dust and t.owned]
@@ -358,7 +492,7 @@ class Game:
                 lumberjack.chopping -= dt
                 if lumberjack.chopping <= 0 and lumberjack.target:
                     tile = self.state.get_tile(*lumberjack.target)
-                    self.state.chop_tree(tile)
+                    self.handle_chop_result(lumberjack, tile)
                 continue
 
             if lumberjack.target and not self.state.get_tile(*lumberjack.target).has_tree:
@@ -384,6 +518,16 @@ class Game:
                 continue
             lumberjack.x += (dx / dist) * speed * dt
             lumberjack.y += (dy / dist) * speed * dt
+
+    def handle_chop_result(self, lumberjack: Lumberjack, tile: Tile) -> None:
+        if lumberjack.friendly:
+            self.state.chop_tree(tile)
+        else:
+            tile.has_tree = False
+            tile.tree_growth = 0.0
+            tile.has_dust = True
+            self.state.inventory["gold"] = max(0, self.state.inventory["gold"] - 2)
+            self.state.active_task = "Ennemi sabote"
 
     def draw(self) -> None:
         self.screen.fill((40, 44, 52))
@@ -448,20 +592,26 @@ class Game:
 
     def draw_grid(self) -> None:
         origin_x, origin_y = 20, 80
+        season_key = self.season_to_key()
         for tile in sorted(self.state.tiles.values(), key=lambda t: (t.y, t.x)):
             rect = pygame.Rect(origin_x + tile.x * TILE_SIZE, origin_y + tile.y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
-            base_color = (70, 100, 70) if tile.owned else (50, 60, 50)
-            pygame.draw.rect(self.screen, base_color, rect)
-            pygame.draw.rect(self.screen, (40, 40, 40), rect, 1)
+            ground = self.sprites.get(f"ground_{season_key}")
+            if ground:
+                self.screen.blit(ground, rect)
+            if not tile.owned:
+                shade = pygame.Surface(rect.size, pygame.SRCALPHA)
+                shade.fill((10, 10, 10, 140))
+                self.screen.blit(shade, rect.topleft)
+            pygame.draw.rect(self.screen, (30, 30, 30), rect, 1)
 
             if tile.special == "computer":
-                pygame.draw.rect(self.screen, (120, 180, 220), rect.inflate(-8, -8))
-                label = self.font.render("PC", True, (10, 30, 50))
-                self.screen.blit(label, (rect.x + 6, rect.y + 8))
+                pc = self.sprites.get("pc")
+                if pc:
+                    self.screen.blit(pc, rect)
             elif tile.special == "bed":
-                pygame.draw.rect(self.screen, (200, 170, 120), rect.inflate(-8, -8))
-                label = self.font.render("Lit", True, (70, 50, 20))
-                self.screen.blit(label, (rect.x + 6, rect.y + 8))
+                bed = self.sprites.get("bed")
+                if bed:
+                    self.screen.blit(bed, rect)
 
             if tile.has_tree:
                 self.draw_tree(rect, tile)
@@ -469,9 +619,9 @@ class Game:
                 pygame.draw.rect(self.screen, (90, 120, 80), rect.inflate(-12, -12))
 
             if tile.has_dust:
-                dust_surf = pygame.Surface(rect.size, pygame.SRCALPHA)
-                dust_surf.fill((180, 170, 140, 160))
-                self.screen.blit(dust_surf, rect.topleft)
+                dust = self.sprites.get("dust")
+                if dust:
+                    self.screen.blit(dust, rect)
 
             if tile.event:
                 self.draw_event_marker(rect, tile.event)
@@ -482,13 +632,17 @@ class Game:
         self.draw_lumberjacks(origin_x, origin_y)
 
     def draw_event_marker(self, rect: pygame.Rect, event: str) -> None:
-        palette = {
-            "ami_bucheron": (120, 180, 240),
-            "arbre_or": (240, 200, 60),
-            "ennemi": (200, 80, 80),
-        }
-        color = palette.get(event, (220, 220, 220))
-        pygame.draw.rect(self.screen, color, rect.inflate(-16, -16))
+        if event == "ennemi":
+            sprite = self.sprites.get("enemy")
+        elif event == "arbre_or":
+            sprite = self.sprites.get("tree_gold")
+        elif event == "ami_bucheron":
+            sprite = self.sprites.get("lumberjack")
+        else:
+            sprite = None
+        if sprite:
+            small = pygame.transform.scale(sprite, (rect.width - 8, rect.height - 8))
+            self.screen.blit(small, (rect.x + 4, rect.y + 4))
 
     def draw_lumberjacks(self, origin_x: int, origin_y: int) -> None:
         for lumberjack in self.state.lumberjacks:
@@ -498,11 +652,12 @@ class Game:
                 TILE_SIZE - 12,
                 TILE_SIZE - 12,
             )
-            wobble = int(math.sin(self.animation_timer * 6) * 2)
-            color = (150 + wobble, 90, 60)
-            pygame.draw.rect(self.screen, color, rect)
-            axe_flash = pygame.Rect(rect.x + rect.width - 6, rect.y + 2, 4, 8)
-            pygame.draw.rect(self.screen, (220, 220, 180), axe_flash)
+            sprite_key = "lumberjack" if lumberjack.friendly else "enemy"
+            sprite = self.sprites.get(sprite_key)
+            if sprite:
+                wobble = 2 if (self.animation_timer % 0.6 < 0.3) else 0
+                jiggle = pygame.Rect(rect.x, rect.y + wobble, rect.width, rect.height)
+                self.screen.blit(sprite, jiggle)
             if lumberjack.chopping > 0:
                 bar = pygame.Rect(rect.x, rect.y - 6, rect.width, 4)
                 duration = max(lumberjack.chop_duration, SMALL_CHOP)
@@ -511,11 +666,13 @@ class Game:
                 pygame.draw.rect(self.screen, (200, 200, 80), (bar.x, bar.y, bar.width * progress, bar.height))
 
     def draw_tree(self, rect: pygame.Rect, tile: Tile) -> None:
-        colors = {"small": (70, 160, 90), "medium": (80, 150, 100), "large": (90, 140, 110)}
-        pygame.draw.rect(self.screen, colors.get(tile.tree_type, (70, 140, 90)), rect.inflate(-10, -10))
-        if self.animation_timer % 0.6 < 0.3:
-            sway = pygame.Rect(rect.x + 6, rect.y + 4, rect.width - 12, 6)
-            pygame.draw.rect(self.screen, (120, 180, 120), sway)
+        key = "tree_large" if tile.tree_type == "large" else "tree_medium" if tile.tree_type == "medium" else "tree_small"
+        if tile.event == "arbre_or":
+            key = "tree_gold"
+        tree = self.sprites.get(key)
+        if tree:
+            sway = 2 if (self.animation_timer % 0.8 < 0.4) else 0
+            self.screen.blit(tree, (rect.x, rect.y - sway))
 
     def draw_resolution_panel(self) -> None:
         panel = pygame.Rect(self.state.screen_width - 220, 10, 210, 70)
@@ -616,7 +773,17 @@ class Game:
             self.handle_events()
             self.update(dt)
             self.draw()
+        self.state.save_game()
         pygame.quit()
+
+    def season_to_key(self) -> str:
+        mapping = {
+            "Printemps": "spring",
+            "Été": "summer",
+            "Automne": "autumn",
+            "Hiver": "winter",
+        }
+        return mapping.get(self.state.current_season(), "spring")
 
 
 if __name__ == "__main__":

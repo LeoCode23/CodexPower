@@ -29,6 +29,7 @@ python game.py
 - **Arbres**: repoussent progressivement sur les tuiles possédées avec un cycle de croissance (petit/moyen/grand) plus lent et une densité réduite.
 - **Bûcherons**: se déplacent de manière fluide vers l'arbre mûr le plus proche et coupent pendant plusieurs secondes; un ami bûcheron peut apparaître via un événement.
 - **Cycle jour/nuit**: 24 minutes pour une journée complète, avec saisons et météo changeantes appliquées à l'éclairage.
-- **Sauvegarde**: `savegame.json` contient la grille, l'inventaire, la météo, la résolution, les bûcherons, etc., pour partager la partie.
+- **Sauvegarde**: `savegame.json` est chargé automatiquement au lancement et autosauvé régulièrement (et à la fermeture) avec la grille, l'inventaire, la météo, la résolution, les bûcherons, etc., pour partager la partie.
+- **Pixel art**: sprites maison façon Zelda-like (bûcheron allié/ennemi, arbres multi-tailles et dorés, poussière, PC, lit) et sols colorés par saison pour donner un rendu cosy immédiatement lisible.
 
 Ce prototype reste compact et texturé par des rectangles/effets pixel saisonniers pour rester léger tout en posant les bases d'un système de tuiles extensible et scénarisable.
