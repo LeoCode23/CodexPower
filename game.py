@@ -117,6 +117,23 @@ def build_sprite_sheet() -> Dict[str, pygame.Surface]:
         scale=4,
     )
 
+    # Buildables
+    sheet["cabin"] = make_sprite(
+        ["cccccccc", "cCCcCCc", "cCCcCCc", "cCCcCCc", "cCCcCCc", "cCCcCCc", "cCCcCCc", "bbbbbbbb"],
+        {"c": (150, 110, 70, 255), "C": (180, 140, 90, 255), "b": (70, 50, 30, 255), ".": None},
+        scale=4,
+    )
+    sheet["workshop"] = make_sprite(
+        ["sssSSsss", "sSSSSSSs", "sSmmSSsS", "sSmmSSsS", "sSSSSSSs", "sSSSSSSs", "sSSSSSSs", "bbbbbbbb"],
+        {"s": (90, 110, 120, 255), "S": (120, 150, 160, 255), "m": (210, 190, 120, 255), "b": (70, 60, 40, 255), ".": None},
+        scale=4,
+    )
+    sheet["watch"] = make_sprite(
+        ["....TT..", "...TTT..", "..TwwT..", "..TwwT..", "..TwwT..", "..TwwT..", "..TwwT..", "..bbbb.."],
+        {"T": (90, 120, 80, 255), "w": (200, 200, 220, 255), "b": (70, 50, 30, 255), ".": None},
+        scale=4,
+    )
+
     # Characters
     sheet["lumberjack"] = make_sprite(
         ["...rr...", "..rrrr..", "..rRRr..", "..rRRr..", "..rrrr..", "..bbbb..", ".bbMMbb.", "b..MM..b"],
@@ -130,7 +147,7 @@ def build_sprite_sheet() -> Dict[str, pygame.Surface]:
         scale=4,
     )
     sheet["enemy"] = make_sprite(
-        ["...rr...", "..rrrr..", "..rkkk..", "..rkkk..", "..rrrr..", "..bbbb..", ".bbMMbb.", "b..MM..b"],
+        ["...rr...", "..rrrr..", "..rkkk..", "..rkkk..", "..rrrr..", "..bbbb..", ".bbMMbb.", "b..MM..b"],   
         {
             "r": (140, 40, 40, 255),
             "k": (60, 60, 60, 255),
@@ -140,6 +157,32 @@ def build_sprite_sheet() -> Dict[str, pygame.Surface]:
         },
         scale=4,
     )
+
+    # UI icons (emoji style blocks)
+    sheet["icon_buy"] = make_sprite([
+        "..GG..",
+        ".GggG.",
+        "GggggG",
+        "GggggG",
+        ".GggG.",
+        "..GG..",
+    ], {"G": (240, 196, 50, 255), "g": (210, 160, 40, 255), ".": None}, scale=6)
+    sheet["icon_broom"] = make_sprite([
+        "..yy..",
+        "..yy..",
+        "..yy..",
+        "yyyyyy",
+        ".yyyy.",
+        "..yy..",
+    ], {"y": (230, 190, 90, 255), ".": None}, scale=6)
+    sheet["icon_build"] = make_sprite([
+        "RRRRRR",
+        "R....R",
+        "R....R",
+        "RRRRRR",
+        "R....R",
+        "RRRRRR",
+    ], {"R": (120, 180, 220, 255), ".": None}, scale=6)
 
     return sheet
 
@@ -155,6 +198,7 @@ class Tile:
     has_dust: bool = False
     special: Optional[str] = None  # computer or bed
     event: Optional[str] = None  # story or random event
+    building: Optional[str] = None  # cabane, atelier, tour
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -172,6 +216,7 @@ class Lumberjack:
     chopping: float = 0.0
     friendly: bool = True
     chop_duration: float = 0.0
+    health: int = 3
 
     def position(self) -> Tuple[int, int]:
         return self.x, self.y
@@ -188,9 +233,12 @@ class GameState:
         self.weather = "Soleil"
         self.lumberjacks: List[Lumberjack] = [Lumberjack(0.0, 0.0)]
         self.cleaning_tool = False
+        self.active_tool = "buy"  # buy, broom, build
+        self.build_selection = 0
         self.active_task = "Achat de terrain"
         self.selling_dialog = False
         self.pending_sale: Optional[dict] = None
+        self.event_timer = 0.0
         self.load_or_init_tiles()
         self.active_task = "Chargement auto" if SAVE_FILE.exists() else "Nouvelle partie"
 
@@ -242,7 +290,7 @@ class GameState:
 
     def update_trees(self, dt: float) -> None:
         for tile in self.tiles.values():
-            if tile.has_tree:
+            if tile.has_tree or tile.building:
                 continue
             if not tile.owned:
                 continue
@@ -256,6 +304,31 @@ class GameState:
         self.season_time = (self.season_time + dt) % (SEASON_LENGTH_SECONDS * 4)
         if self.season_time % SEASON_LENGTH_SECONDS < dt:
             self.roll_weather()
+
+    def update_events(self, dt: float) -> None:
+        self.event_timer += dt
+        if self.event_timer < 22:
+            return
+        self.event_timer = 0.0
+        owned = self.owned_tiles()
+        if not owned:
+            return
+        tile = random.choice(owned)
+        if tile.building:
+            return
+        event = random.choice(["ennemi", "ami_bucheron", "arbre_or", "fete", "visite"])
+        tile.event = event
+        if event == "ami_bucheron":
+            self.lumberjacks.append(Lumberjack(tile.x + 0.1, tile.y + 0.1))
+        elif event == "ennemi":
+            self.lumberjacks.append(Lumberjack(tile.x + 0.1, tile.y + 0.1, friendly=False, health=2))
+        elif event == "arbre_or":
+            tile.has_tree = True
+            tile.tree_type = "large"
+        elif event == "fete":
+            self.inventory["gold"] += 4
+        elif event == "visite":
+            self.inventory["wood"] += 2
 
     def current_day_fraction(self) -> float:
         return self.day_time / DAY_LENGTH_SECONDS
@@ -283,6 +356,24 @@ class GameState:
         wood_gain = {"small": 1, "medium": 2, "large": 3}.get(tile.tree_type, 1)
         self.inventory["wood"] += wood_gain
         self.active_task = "Bûcheronnage"
+
+    def place_building(self, tile: Tile, building: str) -> None:
+        if tile.has_tree or tile.has_dust or tile.special:
+            return
+        if not tile.owned:
+            return
+        if tile.building:
+            return
+        cost = {"cabane": (5, 8), "atelier": (8, 12), "tour": (10, 14)}  # wood, gold
+        need_wood, need_gold = cost.get(building, (0, 0))
+        if self.inventory["wood"] < need_wood or self.inventory["gold"] < need_gold:
+            return
+        self.inventory["wood"] -= need_wood
+        self.inventory["gold"] -= need_gold
+        tile.building = building
+        tile.has_tree = False
+        tile.tree_growth = 0.0
+        self.active_task = f"Construit {building}"
 
     def sell_resources(self) -> None:
         gained = self.inventory["wood"] * 4 + self.inventory["dust"] * 2
@@ -316,6 +407,8 @@ class GameState:
             "screen": [self.screen_width, self.screen_height],
             "lumberjacks": [asdict(l) for l in self.lumberjacks],
             "active_task": self.active_task,
+            "active_tool": self.active_tool,
+            "build_selection": self.build_selection,
         }
         SAVE_FILE.write_text(json.dumps(data, indent=2))
 
@@ -333,6 +426,8 @@ class GameState:
         else:
             self.lumberjacks = [Lumberjack(0.0, 0.0)]
         self.active_task = data.get("active_task", "Achat de terrain")
+        self.active_tool = data.get("active_tool", "buy")
+        self.build_selection = data.get("build_selection", 0)
         self.queue_neighbors()
 
     def queue_neighbors(self) -> None:
@@ -394,7 +489,8 @@ class Game:
                 if event.key == pygame.K_p:
                     self.pause_menu_open = not self.pause_menu_open
                 if event.key == pygame.K_c:
-                    self.state.toggle_cleaner()
+                    self.state.active_tool = "broom" if self.state.active_tool != "broom" else "buy"
+                    self.state.cleaning_tool = self.state.active_tool == "broom"
                     self.state.active_task = "Balai prêt" if self.state.cleaning_tool else "Achat de terrain"
                 if event.key == pygame.K_s and pygame.key.get_mods() & pygame.KMOD_CTRL:
                     self.state.save_game()
@@ -408,28 +504,23 @@ class Game:
                     self.adjust_resolution(0, 0)
                 if event.key == pygame.K_b:
                     self.jump_to_morning()
-                if event.key == pygame.K_LEFTBRACKET:
-                    self.adjust_resolution(-32, 0)
-                if event.key == pygame.K_RIGHTBRACKET:
-                    self.adjust_resolution(32, 0)
-                if event.key == pygame.K_SEMICOLON:
-                    self.adjust_resolution(0, -32)
-                if event.key == pygame.K_QUOTE:
-                    self.adjust_resolution(0, 32)
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 self.handle_click(event.pos)
 
     def handle_click(self, pos: Tuple[int, int]) -> None:
-        grid_origin = (20, 80)
+        grid_origin = (20, 90)
         x, y = pos
-        # Resolution panel buttons
-        res_panel = pygame.Rect(self.state.screen_width - 220, 10, 210, 60)
-        if res_panel.collidepoint(pos) or (self.pause_menu_open and self.handle_pause_click(pos)):
-            self.handle_resolution_click(pos)
-            return
+
+        if self.pause_menu_open:
+            if self.handle_pause_click(pos):
+                return
 
         if self.state.selling_dialog:
             self.handle_sell_click(pos)
+            return
+
+        if self.toolbar_rect().collidepoint(pos):
+            self.handle_toolbar_click(pos)
             return
 
         tile_x = (x - grid_origin[0]) // TILE_SIZE
@@ -446,8 +537,13 @@ class Game:
             self.jump_to_morning()
             return
 
-        if self.state.cleaning_tool:
+        if self.state.active_tool == "broom":
             self.state.clean_tile(tile)
+            return
+
+        if self.state.active_tool == "build":
+            building = ["cabane", "atelier", "tour"][self.state.build_selection % 3]
+            self.state.place_building(tile, building)
             return
 
         if tile.has_tree and not tile.has_dust:
@@ -477,6 +573,7 @@ class Game:
         self.state.spawn_dust(dt)
         self.state.update_trees(dt)
         self.state.update_time(dt)
+        self.state.update_events(dt)
         self.update_lumberjacks(dt)
         self.animation_timer += dt
         self.autosave_timer += dt
@@ -487,12 +584,42 @@ class Game:
 
     def update_lumberjacks(self, dt: float) -> None:
         targets = [t for t in self.state.tiles.values() if t.has_tree and not t.has_dust and t.owned]
+        enemies = [l for l in self.state.lumberjacks if not l.friendly]
+        friends = [l for l in self.state.lumberjacks if l.friendly]
+        # friendly units protect first
+        for friend in friends:
+            if enemies:
+                enemy = min(enemies, key=lambda e: abs(e.x - friend.x) + abs(e.y - friend.y))
+                dist = math.hypot(enemy.x - friend.x, enemy.y - friend.y)
+                if dist < 0.2:
+                    enemy.health -= dt * 2
+                    if enemy.health <= 0:
+                        self.state.lumberjacks.remove(enemy)
+                        enemies.remove(enemy)
+                        self.state.active_task = "Ennemi neutralisé"
         for lumberjack in self.state.lumberjacks:
             if lumberjack.chopping > 0:
                 lumberjack.chopping -= dt
                 if lumberjack.chopping <= 0 and lumberjack.target:
                     tile = self.state.get_tile(*lumberjack.target)
                     self.handle_chop_result(lumberjack, tile)
+                continue
+
+            if lumberjack.friendly and enemies:
+                target_enemy = min(enemies, key=lambda e: abs(e.x - lumberjack.x) + abs(e.y - lumberjack.y))
+                dx = target_enemy.x - lumberjack.x
+                dy = target_enemy.y - lumberjack.y
+                dist = math.hypot(dx, dy)
+                speed = 1.4
+                if dist < 0.1:
+                    target_enemy.health -= dt * 3
+                    if target_enemy.health <= 0:
+                        self.state.lumberjacks.remove(target_enemy)
+                        enemies.remove(target_enemy)
+                        self.state.active_task = "Ennemi neutralisé"
+                    continue
+                lumberjack.x += (dx / dist) * speed * dt
+                lumberjack.y += (dy / dist) * speed * dt
                 continue
 
             if lumberjack.target and not self.state.get_tile(*lumberjack.target).has_tree:
@@ -534,7 +661,7 @@ class Game:
         self.draw_background_overlay()
         self.draw_header()
         self.draw_grid()
-        self.draw_resolution_panel()
+        self.draw_toolbar()
         if self.state.selling_dialog:
             self.draw_sell_dialog()
         if self.pause_menu_open:
@@ -574,24 +701,103 @@ class Game:
         self.screen.blit(noise, (0, 0))
 
     def draw_header(self) -> None:
+        bar = pygame.Rect(10, 10, self.state.screen_width - 20, 64)
+        pygame.draw.rect(self.screen, (24, 32, 26), bar)
+        pygame.draw.rect(self.screen, (120, 150, 120), bar, 2)
         gold = self.state.inventory["gold"]
         wood = self.state.inventory["wood"]
         dust = self.state.inventory["dust"]
-        texts = [
-            f"Or: {gold}",
-            f"Bois: {wood}",
-            f"Poussière: {dust}",
-            f"Saison: {self.state.current_season()} ({self.state.weather})",
-            f"Tâche: {self.state.active_task}",
-            f"Outil: {'Balai' if self.state.cleaning_tool else 'Main'}",
-            "Ctrl+S/F5 sauvegarde | Ctrl+L/F9 charge | C balai | B lit | P menu",
+        cells = [
+            ("💰", gold, (240, 210, 80)),
+            ("🪵", wood, (180, 150, 110)),
+            ("🧹", dust, (200, 190, 150)),
+            ("⏱", f"{int(self.state.current_day_fraction()*24)}h", (180, 200, 220)),
+            ("☁", self.state.weather, (180, 220, 240)),
+            ("🍃", self.state.current_season(), (200, 200, 160)),
+            ("⚙", self.state.active_task, (200, 220, 200)),
         ]
-        for i, text in enumerate(texts):
-            surface = self.font.render(text, True, (230, 230, 230))
-            self.screen.blit(surface, (20, 10 + i * 18))
+        cell_w = (bar.width - 20) // len(cells)
+        for i, (icon, text, color) in enumerate(cells):
+            rect = pygame.Rect(bar.x + 10 + i * cell_w, bar.y + 10, cell_w - 8, 44)
+            pygame.draw.rect(self.screen, (34, 48, 40), rect)
+            pygame.draw.rect(self.screen, (70, 90, 70), rect, 1)
+            label = self.big_font.render(str(icon), True, color)
+            self.screen.blit(label, (rect.x + 4, rect.y + 2))
+            value = self.font.render(str(text), True, (230, 230, 230))
+            self.screen.blit(value, (rect.x + 4, rect.y + 26))
 
+    def toolbar_rect(self) -> pygame.Rect:
+        return pygame.Rect(0, self.state.screen_height - 92, self.state.screen_width, 92)
+
+    def handle_toolbar_click(self, pos: Tuple[int, int]) -> None:
+        bar = self.toolbar_rect()
+        buttons = [
+            ("buy", pygame.Rect(bar.x + 20, bar.y + 16, 72, 60)),
+            ("broom", pygame.Rect(bar.x + 112, bar.y + 16, 72, 60)),
+            ("build", pygame.Rect(bar.x + 204, bar.y + 16, 72, 60)),
+            ("build_next", pygame.Rect(bar.x + 292, bar.y + 16, 44, 60)),
+        ]
+        for action, rect in buttons:
+            if rect.collidepoint(pos):
+                if action == "build_next":
+                    self.state.build_selection = (self.state.build_selection + 1) % 3
+                    return
+                self.state.active_tool = action if action != "build_next" else self.state.active_tool
+                self.state.cleaning_tool = self.state.active_tool == "broom"
+                self.state.active_task = {
+                    "buy": "Achat de terrain",
+                    "broom": "Balai prêt",
+                    "build": "Construction",
+                }.get(self.state.active_tool, self.state.active_task)
+                return
+        # open sell dialog on machine icon area
+        shop_rect = pygame.Rect(bar.right - 140, bar.y + 12, 120, 68)
+        if shop_rect.collidepoint(pos):
+            self.open_sell_dialog()
+
+    def draw_toolbar(self) -> None:
+        bar = self.toolbar_rect()
+        pygame.draw.rect(self.screen, (18, 22, 24), bar)
+        pygame.draw.rect(self.screen, (110, 120, 130), bar, 2)
+        labels = [
+            ("icon_buy", "Acheter"),
+            ("icon_broom", "Balai"),
+            ("icon_build", "Construire"),
+        ]
+        for i, (icon_key, name) in enumerate(labels):
+            rect = pygame.Rect(bar.x + 20 + i * 92, bar.y + 16, 72, 60)
+            active = (self.state.active_tool == "buy" and i == 0) or (
+                self.state.active_tool == "broom" and i == 1
+            ) or (self.state.active_tool == "build" and i == 2)
+            self.draw_icon_button(rect, self.sprites.get(icon_key), active)
+
+        # build selection info
+        build_rect = pygame.Rect(bar.x + 292, bar.y + 16, 44, 60)
+        pygame.draw.rect(self.screen, (50, 60, 70), build_rect)
+        pygame.draw.rect(self.screen, (150, 170, 190), build_rect, 1)
+        build_name = ["Cabane", "Atelier", "Tour"][self.state.build_selection % 3]
+        icon = self.font.render("→", True, (230, 230, 230))
+        self.screen.blit(icon, (build_rect.centerx - 6, build_rect.y + 6))
+        label = self.font.render(build_name, True, (230, 230, 230))
+        self.screen.blit(label, (build_rect.x - 8, build_rect.y + 34))
+
+        # selling machine quick access
+        shop_rect = pygame.Rect(bar.right - 140, bar.y + 12, 120, 68)
+        pygame.draw.rect(self.screen, (70, 110, 90), shop_rect)
+        pygame.draw.rect(self.screen, (200, 230, 210), shop_rect, 2)
+        shop_label = self.big_font.render("💻", True, (20, 40, 20))
+        self.screen.blit(shop_label, (shop_rect.x + 8, shop_rect.y + 6))
+        small = self.font.render("Vendre", True, (20, 40, 20))
+        self.screen.blit(small, (shop_rect.x + 8, shop_rect.y + 40))
+
+    def draw_icon_button(self, rect: pygame.Rect, icon: Optional[pygame.Surface], active: bool) -> None:
+        pygame.draw.rect(self.screen, (60, 70, 80) if not active else (110, 150, 110), rect, border_radius=6)
+        pygame.draw.rect(self.screen, (160, 180, 200), rect, 2)
+        if icon:
+            scaled = pygame.transform.scale(icon, (rect.width - 12, rect.height - 12))
+            self.screen.blit(scaled, (rect.x + 6, rect.y + 6))
     def draw_grid(self) -> None:
-        origin_x, origin_y = 20, 80
+        origin_x, origin_y = 20, 90
         season_key = self.season_to_key()
         for tile in sorted(self.state.tiles.values(), key=lambda t: (t.y, t.x)):
             rect = pygame.Rect(origin_x + tile.x * TILE_SIZE, origin_y + tile.y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
@@ -612,6 +818,12 @@ class Game:
                 bed = self.sprites.get("bed")
                 if bed:
                     self.screen.blit(bed, rect)
+
+            if tile.building:
+                key = "cabin" if tile.building == "cabane" else "workshop" if tile.building == "atelier" else "watch"
+                sprite = self.sprites.get(key)
+                if sprite:
+                    self.screen.blit(sprite, rect)
 
             if tile.has_tree:
                 self.draw_tree(rect, tile)
@@ -638,6 +850,8 @@ class Game:
             sprite = self.sprites.get("tree_gold")
         elif event == "ami_bucheron":
             sprite = self.sprites.get("lumberjack")
+        elif event in ("fete", "visite"):
+            sprite = self.sprites.get("icon_buy")
         else:
             sprite = None
         if sprite:
@@ -715,11 +929,38 @@ class Game:
         for i, text in enumerate(body_lines):
             surf = self.font.render(text, True, (230, 230, 230))
             overlay.blit(surf, (panel.x + 20, panel.y + 50 + i * 22))
+        # resolution buttons
+        base_x = panel.x + 20
+        base_y = panel.y + 120
+        buttons = [
+            ("-H", pygame.Rect(base_x, base_y, 48, 28), (-32, 0)),
+            ("+H", pygame.Rect(base_x + 60, base_y, 48, 28), (32, 0)),
+            ("-V", pygame.Rect(base_x + 130, base_y, 48, 28), (0, -32)),
+            ("+V", pygame.Rect(base_x + 190, base_y, 48, 28), (0, 32)),
+        ]
+        for label, rect, _ in buttons:
+            pygame.draw.rect(overlay, (60, 90, 70), rect)
+            pygame.draw.rect(overlay, (200, 220, 200), rect, 1)
+            overlay.blit(self.font.render(label, True, (20, 30, 20)), (rect.x + 10, rect.y + 6))
         self.screen.blit(overlay, (0, 0))
 
     def handle_pause_click(self, pos: Tuple[int, int]) -> bool:
         panel = pygame.Rect(self.state.screen_width // 2 - 180, self.state.screen_height // 2 - 100, 360, 200)
-        return panel.collidepoint(pos)
+        if not panel.collidepoint(pos):
+            return False
+        base_x = panel.x + 20
+        base_y = panel.y + 120
+        buttons = [
+            (pygame.Rect(base_x, base_y, 48, 28), (-32, 0)),
+            (pygame.Rect(base_x + 60, base_y, 48, 28), (32, 0)),
+            (pygame.Rect(base_x + 130, base_y, 48, 28), (0, -32)),
+            (pygame.Rect(base_x + 190, base_y, 48, 28), (0, 32)),
+        ]
+        for rect, delta in buttons:
+            if rect.collidepoint(pos):
+                self.adjust_resolution(*delta)
+                return True
+        return True
 
     def open_sell_dialog(self) -> None:
         self.state.pending_sale = {
