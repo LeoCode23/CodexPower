@@ -446,6 +446,11 @@ class GameState:
         self.recompute_storage_capacity()
         self.queue_neighbors()
 
+    def clear_enemy_event(self, enemy: Lumberjack) -> None:
+        tile = self.get_tile(int(round(enemy.x)), int(round(enemy.y)), create=False)
+        if tile and tile.event == "ennemi":
+            tile.event = None
+
     def get_tile(self, x: int, y: int, create: bool = True) -> Optional[Tile]:
         tile = self.tiles.get((x, y))
         if tile or not create:
@@ -686,6 +691,14 @@ class GameState:
         tile.has_dust = False
         self.active_task = "Bâtiment détruit"
 
+    def remove_friend_at(self, tile: Tile) -> None:
+        for lumberjack in list(self.lumberjacks):
+            lx, ly = int(round(lumberjack.x)), int(round(lumberjack.y))
+            if lumberjack.friendly and (lx, ly) == (tile.x, tile.y):
+                self.lumberjacks.remove(lumberjack)
+                self.active_task = "Ami renvoyé"
+                return
+
     def sell_resources(self) -> None:
         multiplier = 1.0 + self.sell_bonus
         gained = int((self.inventory["wood"] * 4 + self.inventory["dust"] * 2) * multiplier)
@@ -913,6 +926,7 @@ class Game:
             "statue",
             "garden",
         ]
+        self.pending_action: Optional[dict] = None
         self.state.save_game()
 
     def adjust_resolution(self, dx: int, dy: int) -> None:
@@ -927,6 +941,7 @@ class Game:
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     self.running = False
+                    self.pending_action = None
                 if event.key == pygame.K_p:
                     self.pause_menu_open = not self.pause_menu_open
                 if event.key == pygame.K_c:
@@ -951,6 +966,9 @@ class Game:
     def handle_click(self, pos: Tuple[int, int]) -> None:
         grid_origin = (20 + int(self.state.camera_offset[0]), 120 + int(self.state.camera_offset[1]))
         x, y = pos
+
+        if self.pending_action and self.handle_action_dialog_click(pos):
+            return
 
         if self.last_click and self.handle_inspector_click(pos):
             return
@@ -1022,6 +1040,37 @@ class Game:
         self.state.buy_tile(tile)
         self.last_click = tile if tile.owned or tile.building else None
 
+    def open_action_dialog(self, action: str, tile: Tile) -> None:
+        self.pending_action = {
+            "action": action,
+            "tile": (tile.x, tile.y),
+            "building": tile.building,
+            "tier": tile.building_tier,
+        }
+
+    def handle_action_dialog_click(self, pos: Tuple[int, int]) -> bool:
+        dialog = pygame.Rect(self.state.screen_width // 2 - 170, self.state.screen_height // 2 - 90, 340, 180)
+        if not dialog.collidepoint(pos):
+            self.pending_action = None
+            return True
+        confirm = pygame.Rect(dialog.x + 24, dialog.bottom - 60, 120, 36)
+        cancel = pygame.Rect(dialog.right - 144, dialog.bottom - 60, 120, 36)
+        if confirm.collidepoint(pos) and self.pending_action:
+            tile = self.state.get_tile(*self.pending_action["tile"], create=False)
+            if tile:
+                if self.pending_action["action"] == "upgrade":
+                    self.state.upgrade_building(tile)
+                elif self.pending_action["action"] == "destroy":
+                    self.state.destroy_building(tile)
+                elif self.pending_action["action"] == "retire_friend":
+                    self.state.remove_friend_at(tile)
+            self.pending_action = None
+            return True
+        if cancel.collidepoint(pos):
+            self.pending_action = None
+            return True
+        return False
+
     def handle_resolution_click(self, pos: Tuple[int, int]) -> None:
         x, y = pos
         base_x = self.state.screen_width - 200
@@ -1088,6 +1137,7 @@ class Game:
                     if enemy.health <= 0:
                         self.state.lumberjacks.remove(enemy)
                         enemies.remove(enemy)
+                        self.state.clear_enemy_event(enemy)
                         self.state.active_task = "Ennemi neutralisé"
         for lumberjack in self.state.lumberjacks:
             if lumberjack.chopping > 0:
@@ -1110,6 +1160,7 @@ class Game:
                     if target_enemy.health <= 0:
                         self.state.lumberjacks.remove(target_enemy)
                         enemies.remove(target_enemy)
+                        self.state.clear_enemy_event(target_enemy)
                         self.state.active_task = "Ennemi neutralisé"
                     continue
                 lumberjack.x += (dx / dist) * speed * dt
@@ -1267,6 +1318,8 @@ class Game:
         self.draw_toolbar()
         if self.state.selling_dialog:
             self.draw_sell_dialog()
+        if self.pending_action:
+            self.draw_action_dialog()
         if self.pause_menu_open:
             self.draw_pause_menu()
         pygame.display.flip()
@@ -1390,15 +1443,30 @@ class Game:
         pygame.draw.rect(self.screen, (150, 210, 170), panel, 2, border_radius=10)
         title = self.big_font.render(f"Case ({tile.x},{tile.y})", True, (230, 230, 230))
         self.screen.blit(title, (panel.x + 12, panel.y + 10))
+        occupants = [l for l in self.state.lumberjacks if int(round(l.x)) == tile.x and int(round(l.y)) == tile.y]
+        friends_here = [l for l in occupants if l.friendly]
+        foes_here = [l for l in occupants if not l.friendly]
         info_lines = [
             f"Bâtiment: {tile.building or 'aucun'}",
             f"Niveau: {tile.building_tier}",
-            f"Progression: {int(tile.building_progress * 100)}%",
+            f"État: {'poussière' if tile.has_dust else 'propre'} | Dégâts: {int(tile.damage*100)}%",
         ]
         for i, text in enumerate(info_lines):
             surf = self.font.render(text, True, (220, 230, 220))
             self.screen.blit(surf, (panel.x + 12, panel.y + 44 + i * 20))
+        bar_back = pygame.Rect(panel.x + 12, panel.y + 110, panel.width - 24, 12)
+        pygame.draw.rect(self.screen, (20, 26, 30), bar_back, border_radius=4)
+        pct = max(0.0, min(1.0, tile.building_progress))
+        filled = pygame.Rect(bar_back.x, bar_back.y, int(bar_back.width * pct), bar_back.height)
+        pygame.draw.rect(self.screen, (120, 200, 140), filled, border_radius=4)
+        bar_label = self.font.render("Progression", True, (210, 220, 210))
+        self.screen.blit(bar_label, (bar_back.x, bar_back.y - 18))
+        if friends_here or foes_here:
+            crowd = ", ".join(["Allié" for _ in friends_here] + ["Ennemi" for _ in foes_here])
+            crowd_label = self.font.render(f"Unités: {crowd}", True, (230, 200, 200))
+            self.screen.blit(crowd_label, (panel.x + 12, panel.bottom - 84))
         self.inspector_rects = {k: v for k, v in self.inspector_rects.items() if k in ("upgrade", "destroy", "close")}
+        actions: Dict[str, pygame.Rect] = {}
         if tile.building:
             upgrade = pygame.Rect(panel.x + 12, panel.bottom - 60, 96, 36)
             destroy = pygame.Rect(panel.x + 132, panel.bottom - 60, 96, 36)
@@ -1406,16 +1474,16 @@ class Game:
             pygame.draw.rect(self.screen, (150, 90, 90), destroy, border_radius=8)
             self.screen.blit(self.font.render("Upgrade", True, (20, 30, 20)), (upgrade.x + 12, upgrade.y + 8))
             self.screen.blit(self.font.render("Détruire", True, (20, 30, 20)), (destroy.x + 8, destroy.y + 8))
-            self.inspector_rects = {
-                "upgrade": upgrade,
-                "destroy": destroy,
-                "close": pygame.Rect(panel.right - 28, panel.y + 8, 20, 20),
-            }
-            close_rect = self.inspector_rects["close"]
-            pygame.draw.rect(self.screen, (120, 120, 120), close_rect)
-            self.screen.blit(self.font.render("X", True, (10, 10, 10)), (close_rect.x + 4, close_rect.y + 2))
-        else:
-            self.inspector_rects = {"close": pygame.Rect(panel.right - 28, panel.y + 8, 20, 20)}
+            actions.update({"upgrade": upgrade, "destroy": destroy})
+        if friends_here:
+            retire = pygame.Rect(panel.x + 12, panel.bottom - 104, 216, 32)
+            pygame.draw.rect(self.screen, (200, 170, 90), retire, border_radius=8)
+            self.screen.blit(self.font.render("Renvoyer l'ami", True, (40, 30, 10)), (retire.x + 8, retire.y + 6))
+            actions["retire_friend"] = retire
+        close_rect = pygame.Rect(panel.right - 28, panel.y + 8, 20, 20)
+        self.inspector_rects = {**actions, "close": close_rect}
+        pygame.draw.rect(self.screen, (120, 120, 120), close_rect)
+        self.screen.blit(self.font.render("X", True, (10, 10, 10)), (close_rect.x + 4, close_rect.y + 2))
 
     def toolbar_rect(self) -> pygame.Rect:
         return pygame.Rect(0, self.state.screen_height - 92, self.state.screen_width, 92)
@@ -1567,8 +1635,11 @@ class Game:
                 tint_color = (60 + tier_strength * 10, 80 + tier_strength * 6, 40 + tier_strength * 4, 70)
                 tint.fill(tint_color)
                 self.screen.blit(tint, rect.topleft)
-                lvl = self.font.render(f"Lv{tile.building_tier}", True, (255, 255, 255))
-                self.screen.blit(lvl, (rect.x + 4, rect.y + 4))
+                lvl_bg = pygame.Rect(rect.x + 2, rect.y + 2, 32, 16)
+                pygame.draw.rect(self.screen, (20, 30, 20), lvl_bg, border_radius=4)
+                pygame.draw.rect(self.screen, (180, 220, 160), lvl_bg, 1, border_radius=4)
+                lvl = self.font.render(f"Lv{tile.building_tier}", True, (230, 240, 220))
+                self.screen.blit(lvl, (lvl_bg.x + 4, lvl_bg.y + 1))
 
             if tile.has_tree:
                 self.draw_tree(rect, tile)
@@ -1606,10 +1677,8 @@ class Game:
     def handle_inspector_click(self, pos: Tuple[int, int]) -> bool:
         for action, rect in self.inspector_rects.items():
             if rect.collidepoint(pos) and self.last_click:
-                if action == "upgrade":
-                    self.state.upgrade_building(self.last_click)
-                elif action == "destroy":
-                    self.state.destroy_building(self.last_click)
+                if action in {"upgrade", "destroy", "retire_friend"}:
+                    self.open_action_dialog(action, self.last_click)
                 elif action == "close":
                     self.last_click = None
                 return True
@@ -1645,7 +1714,15 @@ class Game:
                 bubble = pygame.Rect(rect.x - 2, rect.y - 18, rect.width + 4, 16)
                 pygame.draw.rect(self.screen, (28, 34, 40), bubble, border_radius=4)
                 pygame.draw.rect(self.screen, (120, 170, 200), bubble, 1, border_radius=4)
-                label = self.font.render(icon, True, (230, 230, 230))
+                action_name = {
+                    "chop_tree": "Bûcheronne",
+                    "haul_storage": "Transporte",
+                    "repair_building": "Répare",
+                    "tend_plants": "Plante",
+                    "patrol_fence": "Patrouille",
+                    "assist_construction": "Construit",
+                }.get(task.kind, "Occupe")
+                label = self.font.render(f"{icon} {action_name}", True, (230, 230, 230))
                 self.screen.blit(label, (bubble.x + 4, bubble.y + 1))
                 if task.progress > 0:
                     pct = min(1.0, task.progress / max(task.duration, 0.0001))
@@ -1660,6 +1737,11 @@ class Game:
                 progress = max(0.0, 1 - lumberjack.chopping / duration)
                 pygame.draw.rect(self.screen, (30, 30, 30), bar)
                 pygame.draw.rect(self.screen, (200, 200, 80), (bar.x, bar.y, bar.width * progress, bar.height))
+            health_bar = pygame.Rect(rect.x, rect.bottom + 2, rect.width, 4)
+            pygame.draw.rect(self.screen, (40, 40, 40), health_bar)
+            hp_pct = max(0.0, min(1.0, lumberjack.health / 3))
+            hp_color = (120, 200, 140) if lumberjack.friendly else (200, 120, 120)
+            pygame.draw.rect(self.screen, hp_color, (health_bar.x, health_bar.y, int(health_bar.width * hp_pct), 4))
 
     def draw_tree(self, rect: pygame.Rect, tile: Tile) -> None:
         key = "tree_large" if tile.tree_type == "large" else "tree_medium" if tile.tree_type == "medium" else "tree_small"
@@ -1787,6 +1869,45 @@ class Game:
         screen_pos = (self.state.screen_width // 2 - 160, self.state.screen_height // 2 - 90)
         overlay = pygame.Surface((self.state.screen_width, self.state.screen_height), pygame.SRCALPHA)
         overlay.fill((0, 0, 0, 140))
+        self.screen.blit(overlay, (0, 0))
+        self.screen.blit(dialog, screen_pos)
+
+    def draw_action_dialog(self) -> None:
+        if not self.pending_action:
+            return
+        dialog = pygame.Surface((360, 190), pygame.SRCALPHA)
+        dialog.fill((18, 26, 26, 230))
+        pygame.draw.rect(dialog, (200, 220, 210), dialog.get_rect(), 2)
+        action = self.pending_action.get("action")
+        tile = self.pending_action.get("tile")
+        building = self.pending_action.get("building")
+        tier = self.pending_action.get("tier")
+        title_text = {
+            "upgrade": "Confirmer l'upgrade",
+            "destroy": "Confirmer la destruction",
+            "retire_friend": "Renvoyer l'allié",
+        }.get(action, "Confirmation")
+        title = self.big_font.render(title_text, True, (240, 240, 240))
+        dialog.blit(title, (20, 16))
+        details = [
+            f"Case: {tile}",
+            f"Bâtiment: {building or 'aucun'}", 
+            f"Niveau actuel: {tier}",
+        ]
+        if action == "retire_friend":
+            details = ["Êtes-vous sûr de renvoyer cet allié ?", "Il disparaîtra du campement."]
+        for i, text in enumerate(details):
+            surf = self.font.render(text, True, (220, 220, 220))
+            dialog.blit(surf, (20, 56 + i * 22))
+        confirm = pygame.Rect(24, dialog.get_height() - 60, 140, 36)
+        cancel = pygame.Rect(dialog.get_width() - 164, dialog.get_height() - 60, 140, 36)
+        pygame.draw.rect(dialog, (90, 150, 110), confirm, border_radius=8)
+        pygame.draw.rect(dialog, (150, 90, 90), cancel, border_radius=8)
+        dialog.blit(self.font.render("Confirmer", True, (20, 30, 20)), (confirm.x + 16, confirm.y + 8))
+        dialog.blit(self.font.render("Annuler", True, (30, 20, 20)), (cancel.x + 30, cancel.y + 8))
+        screen_pos = (self.state.screen_width // 2 - 180, self.state.screen_height // 2 - 95)
+        overlay = pygame.Surface((self.state.screen_width, self.state.screen_height), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 160))
         self.screen.blit(overlay, (0, 0))
         self.screen.blit(dialog, screen_pos)
 
