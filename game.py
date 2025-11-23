@@ -133,6 +133,40 @@ def build_sprite_sheet() -> Dict[str, pygame.Surface]:
         {"T": (90, 120, 80, 255), "w": (200, 200, 220, 255), "b": (70, 50, 30, 255), ".": None},
         scale=4,
     )
+    # Storage barrels by tier
+    barrel_palettes = [
+        {"o": (160, 100, 60, 255), "O": (190, 140, 90, 255), ".": None},
+        {"o": (140, 90, 80, 255), "O": (210, 160, 120, 255), ".": None},
+        {"o": (120, 80, 110, 255), "O": (230, 180, 150, 255), ".": None},
+    ]
+    for i, pal in enumerate(barrel_palettes, start=1):
+        sheet[f"barrel_t{i}"] = make_sprite(
+            ["..OO..", ".OOOO.", "OOOOOO", "OOOOOO", ".OOOO.", "..OO.."],
+            pal,
+            scale=6,
+        )
+
+    # Decorative buildables
+    sheet["fence"] = make_sprite(
+        ["||||||", "||||||", "||||||", "||||||", "||||||", "||||||"],
+        {"|": (150, 110, 60, 255), ".": None},
+        scale=6,
+    )
+    sheet["flower"] = make_sprite(
+        ["..r..", ".GrG.", "rGGGr", ".GrG.", "..r..", "..r.."],
+        {"G": (120, 200, 140, 255), "r": (220, 110, 130, 255), ".": None},
+        scale=6,
+    )
+    sheet["fountain"] = make_sprite(
+        ["..bbb..", ".bWWWb.", "bWWWWb", "bWWWWb", ".bWWWb.", "..bbb.."],
+        {"b": (120, 150, 170, 255), "W": (160, 200, 230, 255), ".": None},
+        scale=8,
+    )
+    sheet["color_tile"] = make_sprite(
+        ["RRRR", "RRRR", "RRRR", "RRRR"],
+        {"R": (140, 160, 200, 255), ".": None},
+        scale=8,
+    )
 
     # Characters
     sheet["lumberjack"] = make_sprite(
@@ -183,6 +217,38 @@ def build_sprite_sheet() -> Dict[str, pygame.Surface]:
         "R....R",
         "RRRRRR",
     ], {"R": (120, 180, 220, 255), ".": None}, scale=6)
+    sheet["icon_gold"] = make_sprite([
+        "..GG..",
+        ".GggG.",
+        "GggggG",
+        ".GggG.",
+        "..GG..",
+        "..GG..",
+    ], {"G": (250, 210, 90, 255), "g": (220, 180, 70, 255), ".": None}, scale=5)
+    sheet["icon_wood"] = make_sprite([
+        "bbbb",
+        "bbbb",
+        "BBBB",
+        "BBBB",
+        "bbbb",
+        "bbbb",
+    ], {"b": (120, 90, 60, 255), "B": (150, 110, 80, 255), ".": None}, scale=6)
+    sheet["icon_dust"] = make_sprite([
+        "aa..",
+        "aaaa",
+        "aaaa",
+        ".aa.",
+        "aa..",
+        "..aa",
+    ], {"a": (210, 190, 150, 240), ".": None}, scale=6)
+    sheet["icon_task"] = make_sprite([
+        "..tt..",
+        ".tTTt.",
+        "tTTTTt",
+        "tTTTTt",
+        ".tTTt.",
+        "..tt..",
+    ], {"t": (130, 180, 200, 255), "T": (90, 140, 170, 255), ".": None}, scale=6)
 
     return sheet
 
@@ -201,6 +267,7 @@ class Tile:
     building: Optional[str] = None  # cabane, atelier, tour
     damage: float = 0.0
     building_progress: float = 1.0
+    building_tier: int = 1
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -225,6 +292,22 @@ class Task:
     @staticmethod
     def from_dict(data: dict) -> "Task":
         return Task(**data)
+
+
+@dataclass
+class Quest:
+    name: str
+    objectives: Dict[str, int]
+    rewards: Dict[str, int]
+    progress: Dict[str, int] = field(default_factory=dict)
+    completed: bool = False
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @staticmethod
+    def from_dict(data: dict) -> "Quest":
+        return Quest(**data)
 
 
 @dataclass
@@ -259,6 +342,7 @@ class GameState:
         self.screen_width, self.screen_height = screen_size
         self.tiles: Dict[Tuple[int, int], Tile] = {}
         self.inventory = {"gold": 20, "wood": 0, "dust": 0}
+        self.gold_max = 60
         self.dust_timer = 0.0
         self.day_time = 0.0
         self.season_time = 0.0
@@ -272,8 +356,16 @@ class GameState:
         self.pending_sale: Optional[dict] = None
         self.event_timer = 0.0
         self.task_board: List[Task] = []
+        self.storage_tier = 1
+        self.camera_offset = [0, 0]
+        self.quest_npc: Optional[Tuple[int, int]] = None
+        self.quests: List[Quest] = []
+        self.active_quest: Optional[Quest] = None
         self.load_or_init_tiles()
         self.active_task = "Chargement auto" if SAVE_FILE.exists() else "Nouvelle partie"
+
+    def recompute_storage_capacity(self) -> None:
+        self.gold_max = 50 + self.storage_tier * 40
 
     def load_or_init_tiles(self) -> None:
         if SAVE_FILE.exists():
@@ -291,6 +383,15 @@ class GameState:
         # Place special structures
         self.get_tile(0, 0).special = "computer"
         self.get_tile(0, 1).special = "bed"
+        self.quest_npc = (2, 2)
+        self.get_tile(*self.quest_npc).special = "quest"
+        self.quests = [
+            Quest("Bûcheron en herbe", {"cut_tree": 10}, {"gold": 10, "wood": 5}),
+            Quest("Nettoyage du camp", {"clean_dust": 20}, {"gold": 12}),
+            Quest("Architecte", {"build_cabin": 3}, {"gold": 18, "wood": 6}),
+        ]
+        self.active_quest = self.quests[0]
+        self.recompute_storage_capacity()
         self.queue_neighbors()
 
     def get_tile(self, x: int, y: int, create: bool = True) -> Optional[Tile]:
@@ -360,7 +461,7 @@ class GameState:
             tile.has_tree = True
             tile.tree_type = "large"
         elif event == "fete":
-            self.inventory["gold"] += 4
+            self.add_gold(4)
         elif event == "visite":
             self.inventory["wood"] += 2
 
@@ -375,6 +476,28 @@ class GameState:
         options = ["Soleil", "Pluie", "Neige", "Brouillard"]
         self.weather = random.choice(options)
 
+    def progress_quest(self, key: str) -> None:
+        if not self.active_quest or self.active_quest.completed:
+            return
+        current = self.active_quest.progress.get(key, 0)
+        target = self.active_quest.objectives.get(key)
+        if target is None:
+            return
+        self.active_quest.progress[key] = min(target, current + 1)
+        if all(self.active_quest.progress.get(k, 0) >= v for k, v in self.active_quest.objectives.items()):
+            self.active_quest.completed = True
+            for resource, amount in self.active_quest.rewards.items():
+                if resource == "gold":
+                    self.inventory[resource] = min(self.gold_max, self.inventory.get(resource, 0) + amount)
+                else:
+                    self.inventory[resource] = self.inventory.get(resource, 0) + amount
+            self.active_task = f"Quête terminée: {self.active_quest.name}"
+            # advance to next quest
+            for quest in self.quests:
+                if not quest.completed:
+                    self.active_quest = quest
+                    break
+
     def maintain_buildings(self, dt: float) -> None:
         for tile in self.tiles.values():
             if not tile.building:
@@ -388,6 +511,9 @@ class GameState:
             if tile.building_progress < 1.0:
                 tile.building_progress = min(1.0, tile.building_progress + dt / 120)
 
+    def add_gold(self, amount: int) -> None:
+        self.inventory["gold"] = min(self.gold_max, self.inventory.get("gold", 0) + amount)
+
     def toggle_cleaner(self) -> None:
         self.cleaning_tool = not self.cleaning_tool
 
@@ -396,6 +522,7 @@ class GameState:
             tile.has_dust = False
             self.inventory["dust"] += 1
             self.active_task = "Balai : nettoyage"
+            self.progress_quest("clean_dust")
 
     def chop_tree(self, tile: Tile) -> None:
         tile.has_tree = False
@@ -403,29 +530,51 @@ class GameState:
         wood_gain = {"small": 1, "medium": 2, "large": 3}.get(tile.tree_type, 1)
         self.inventory["wood"] += wood_gain
         self.active_task = "Bûcheronnage"
+        self.progress_quest("cut_tree")
 
     def place_building(self, tile: Tile, building: str) -> None:
         if tile.has_tree or tile.has_dust or tile.special:
             return
         if not tile.owned:
             return
-        if tile.building:
-            return
-        cost = {"cabane": (5, 8), "atelier": (8, 12), "tour": (10, 14)}  # wood, gold
-        need_wood, need_gold = cost.get(building, (0, 0))
+        # allow barrel upgrades
+        base_cost = {
+            "cabane": (5, 8),
+            "atelier": (8, 12),
+            "tour": (10, 14),
+            "barrel": (4, 6),
+            "fence": (2, 0),
+            "flower": (1, 0),
+            "fountain": (6, 10),
+            "color_tile": (0, 1),
+            "cabane_t2": (8, 14),
+            "cabane_t3": (10, 18),
+        }
+        need_wood, need_gold = base_cost.get(building, (0, 0))
         if self.inventory["wood"] < need_wood or self.inventory["gold"] < need_gold:
             return
+        if building == "barrel" and tile.building == "barrel":
+            tile.building_tier = min(3, tile.building_tier + 1)
+        else:
+            if tile.building:
+                return
+            tile.building = building
+            tile.building_tier = 1
+            tile.building_progress = 0.35
         self.inventory["wood"] -= need_wood
         self.inventory["gold"] -= need_gold
-        tile.building = building
         tile.has_tree = False
         tile.tree_growth = 0.0
-        tile.building_progress = 0.35
         self.active_task = f"Construit {building}"
+        if building.startswith("cabane"):
+            self.progress_quest("build_cabin")
+        if building == "barrel":
+            self.storage_tier = max(self.storage_tier, tile.building_tier)
+            self.recompute_storage_capacity()
 
     def sell_resources(self) -> None:
         gained = self.inventory["wood"] * 4 + self.inventory["dust"] * 2
-        self.inventory["gold"] += gained
+        self.add_gold(gained)
         self.inventory["wood"] = 0
         self.inventory["dust"] = 0
         self.active_task = "Vente confirmée"
@@ -449,6 +598,7 @@ class GameState:
         data = {
             "tiles": [t.to_dict() for t in self.tiles.values()],
             "inventory": self.inventory,
+            "gold_max": self.gold_max,
             "day_time": self.day_time,
             "season_time": self.season_time,
             "weather": self.weather,
@@ -458,6 +608,11 @@ class GameState:
             "active_tool": self.active_tool,
             "build_selection": self.build_selection,
             "task_board": [t.to_dict() for t in self.task_board],
+            "storage_tier": self.storage_tier,
+            "camera_offset": self.camera_offset,
+            "quests": [q.to_dict() for q in self.quests],
+            "active_quest": self.active_quest.to_dict() if self.active_quest else None,
+            "quest_npc": self.quest_npc,
         }
         SAVE_FILE.write_text(json.dumps(data, indent=2))
 
@@ -465,6 +620,7 @@ class GameState:
         data = json.loads(SAVE_FILE.read_text())
         self.tiles = {(t["x"], t["y"]): Tile.from_dict(t) for t in data["tiles"]}
         self.inventory = data.get("inventory", {"gold": 0, "wood": 0, "dust": 0})
+        self.gold_max = data.get("gold_max", 60)
         self.day_time = data.get("day_time", 0.0)
         self.season_time = data.get("season_time", 0.0)
         self.weather = data.get("weather", "Soleil")
@@ -478,6 +634,16 @@ class GameState:
         self.active_tool = data.get("active_tool", "buy")
         self.build_selection = data.get("build_selection", 0)
         self.task_board = [Task.from_dict(t) for t in data.get("task_board", [])]
+        self.storage_tier = data.get("storage_tier", 1)
+        self.camera_offset = data.get("camera_offset", [0, 0])
+        self.quest_npc = tuple(data.get("quest_npc")) if data.get("quest_npc") else None
+        self.quests = [Quest.from_dict(q) for q in data.get("quests", [])] or self.quests
+        active_quest_data = data.get("active_quest")
+        if active_quest_data:
+            self.active_quest = Quest.from_dict(active_quest_data)
+        elif self.quests:
+            self.active_quest = self.quests[0]
+        self.recompute_storage_capacity()
         self.queue_neighbors()
 
     def serialize_lumberjack(self, lumberjack: Lumberjack) -> dict:
@@ -523,6 +689,9 @@ class GameState:
             self.lumberjacks.append(Lumberjack(tile.x + 0.2, tile.y + 0.2, friendly=False))
 
     def find_storage_tile(self) -> Optional[Tile]:
+        for tile in self.tiles.values():
+            if tile.building == "barrel":
+                return tile
         for tile in self.tiles.values():
             if tile.special == "computer":
                 return tile
@@ -595,6 +764,18 @@ class Game:
         self.pause_menu_open = False
         self.animation_timer = 0.0
         self.autosave_timer = 0.0
+        self.build_palette = [
+            "cabane",
+            "atelier",
+            "tour",
+            "barrel",
+            "fence",
+            "flower",
+            "fountain",
+            "color_tile",
+            "cabane_t2",
+            "cabane_t3",
+        ]
         self.state.save_game()
 
     def adjust_resolution(self, dx: int, dy: int) -> None:
@@ -631,7 +812,7 @@ class Game:
                 self.handle_click(event.pos)
 
     def handle_click(self, pos: Tuple[int, int]) -> None:
-        grid_origin = (20, 120)
+        grid_origin = (20 + int(self.state.camera_offset[0]), 120 + int(self.state.camera_offset[1]))
         x, y = pos
 
         if self.pause_menu_open:
@@ -660,12 +841,19 @@ class Game:
             self.jump_to_morning()
             return
 
+        if tile.special == "quest":
+            if self.state.active_quest and self.state.active_quest.completed:
+                self.state.active_task = "Quêtes: tout est fini !"
+            elif self.state.active_quest:
+                self.state.active_task = f"Quête en cours: {self.state.active_quest.name}"
+            return
+
         if self.state.active_tool == "broom":
             self.state.clean_tile(tile)
             return
 
         if self.state.active_tool == "build":
-            building = ["cabane", "atelier", "tour"][self.state.build_selection % 3]
+            building = self.build_palette[self.state.build_selection % len(self.build_palette)]
             self.state.place_building(tile, building)
             return
 
@@ -693,6 +881,7 @@ class Game:
         self.state.day_time = 0
 
     def update(self, dt: float) -> None:
+        self.update_camera(dt)
         self.state.spawn_dust(dt)
         self.state.update_trees(dt)
         self.state.update_time(dt)
@@ -705,6 +894,20 @@ class Game:
             self.state.save_game()
             self.autosave_timer = 0.0
             self.state.active_task = "Autosave"
+
+    def update_camera(self, dt: float) -> None:
+        keys = pygame.key.get_pressed()
+        speed = 180 * dt
+        if keys[pygame.K_LEFT] or keys[pygame.K_a]:
+            self.state.camera_offset[0] += speed
+        if keys[pygame.K_RIGHT] or keys[pygame.K_d]:
+            self.state.camera_offset[0] -= speed
+        if keys[pygame.K_UP] or keys[pygame.K_w]:
+            self.state.camera_offset[1] += speed
+        if keys[pygame.K_DOWN] or keys[pygame.K_s]:
+            self.state.camera_offset[1] -= speed
+        self.state.camera_offset[0] = max(-160, min(160, self.state.camera_offset[0]))
+        self.state.camera_offset[1] = max(-160, min(160, self.state.camera_offset[1]))
 
     def update_lumberjacks(self, dt: float) -> None:
         enemies = [l for l in self.state.lumberjacks if not l.friendly]
@@ -848,7 +1051,7 @@ class Game:
                 delivered_dust = min(2, self.state.inventory.get("dust", 0))
                 self.state.inventory["wood"] -= delivered_wood
                 self.state.inventory["dust"] -= delivered_dust
-                self.state.inventory["gold"] += delivered_wood + delivered_dust
+                self.state.add_gold(delivered_wood + delivered_dust)
                 self.state.active_task = "Ravitaille au dépôt"
                 lumberjack.current_task = None
             return
@@ -894,8 +1097,9 @@ class Game:
     def draw(self) -> None:
         self.screen.fill((40, 44, 52))
         self.draw_background_overlay()
-        self.draw_header()
         self.draw_grid()
+        # HUD pass drawn last
+        self.draw_header()
         self.draw_toolbar()
         if self.state.selling_dialog:
             self.draw_sell_dialog()
@@ -942,17 +1146,27 @@ class Game:
         gold = self.state.inventory["gold"]
         wood = self.state.inventory["wood"]
         dust = self.state.inventory["dust"]
+        capacity_text = f"{gold}/{self.state.gold_max}"
+        storage_label = f"Tier {self.state.storage_tier}"
         friends = len([l for l in self.state.lumberjacks if l.friendly])
         enemies = len([l for l in self.state.lumberjacks if not l.friendly])
         trees = len([t for t in self.state.tiles.values() if t.has_tree and t.owned])
         buildings = len([t for t in self.state.tiles.values() if t.building])
         dust_count = len([t for t in self.state.tiles.values() if t.has_dust])
+        quest_info = "Aucune quête"
+        if self.state.active_quest:
+            progress_parts = []
+            for key, target in self.state.active_quest.objectives.items():
+                current = self.state.active_quest.progress.get(key, 0)
+                progress_parts.append(f"{current}/{target}")
+            quest_info = f"{self.state.active_quest.name} ({', '.join(progress_parts)})"
+
         rows = [
             [
-                ("💰", gold, (246, 216, 120)),
-                ("🪵", wood, (190, 164, 130)),
-                ("🧹", dust, (210, 200, 170)),
-                ("⏱", f"{int(self.state.current_day_fraction()*24)}h", (200, 220, 240)),
+                (self.sprites.get("icon_gold"), capacity_text, (246, 216, 120)),
+                (self.sprites.get("icon_wood"), wood, (190, 164, 130)),
+                (self.sprites.get("icon_dust"), dust, (210, 200, 170)),
+                (self.sprites.get("icon_task"), f"{int(self.state.current_day_fraction()*24)}h", (200, 220, 240)),
                 ("☁", self.state.weather, (160, 210, 230)),
                 ("🍃", self.state.current_season(), (220, 220, 180)),
             ],
@@ -960,9 +1174,9 @@ class Game:
                 ("🪓", friends, (200, 230, 200)),
                 ("⚔️", enemies, (240, 150, 150)),
                 ("🌲", trees, (180, 220, 180)),
-                ("🏗️", buildings, (220, 200, 170)),
+                ("🏗️", f"{buildings} ({storage_label})", (220, 200, 170)),
                 ("✨", dust_count, (210, 200, 240)),
-                ("⚙", self.state.active_task, (200, 230, 210)),
+                ("⚙", quest_info if self.state.active_task.startswith("Quête") else self.state.active_task, (200, 230, 210)),
             ],
         ]
         row_h = 36
@@ -972,8 +1186,12 @@ class Game:
                 rect = pygame.Rect(bar.x + 10 + i * cell_w, bar.y + 8 + r * (row_h + 4), cell_w - 8, row_h)
                 pygame.draw.rect(self.screen, (30, 40, 44), rect, border_radius=8)
                 pygame.draw.rect(self.screen, (80, 110, 100), rect, 1, border_radius=8)
-                label = self.big_font.render(str(icon), True, color)
-                self.screen.blit(label, (rect.x + 4, rect.y + 2))
+                if isinstance(icon, pygame.Surface):
+                    scaled = pygame.transform.scale(icon, (24, 24))
+                    self.screen.blit(scaled, (rect.x + 4, rect.y + 4))
+                else:
+                    label = self.big_font.render(str(icon), True, color)
+                    self.screen.blit(label, (rect.x + 4, rect.y + 2))
                 value = self.font.render(str(text), True, (235, 235, 235))
                 self.screen.blit(value, (rect.x + 36, rect.y + 10))
 
@@ -991,7 +1209,7 @@ class Game:
         for action, rect in buttons:
             if rect.collidepoint(pos):
                 if action == "build_next":
-                    self.state.build_selection = (self.state.build_selection + 1) % 3
+                    self.state.build_selection = (self.state.build_selection + 1) % len(self.build_palette)
                     return
                 self.state.active_tool = action if action != "build_next" else self.state.active_tool
                 self.state.cleaning_tool = self.state.active_tool == "broom"
@@ -1026,7 +1244,7 @@ class Game:
         build_rect = pygame.Rect(bar.x + 292, bar.y + 16, 44, 60)
         pygame.draw.rect(self.screen, (50, 60, 70), build_rect)
         pygame.draw.rect(self.screen, (150, 170, 190), build_rect, 1)
-        build_name = ["Cabane", "Atelier", "Tour"][self.state.build_selection % 3]
+        build_name = self.build_palette[self.state.build_selection % len(self.build_palette)]
         icon = self.font.render("→", True, (230, 230, 230))
         self.screen.blit(icon, (build_rect.centerx - 6, build_rect.y + 6))
         label = self.font.render(build_name, True, (230, 230, 230))
@@ -1048,7 +1266,8 @@ class Game:
             scaled = pygame.transform.scale(icon, (rect.width - 12, rect.height - 12))
             self.screen.blit(scaled, (rect.x + 6, rect.y + 6))
     def draw_grid(self) -> None:
-        origin_x, origin_y = 20, 120
+        origin_x = 20 + int(self.state.camera_offset[0])
+        origin_y = 120 + int(self.state.camera_offset[1])
         season_key = self.season_to_key()
         for tile in sorted(self.state.tiles.values(), key=lambda t: (t.y, t.x)):
             rect = pygame.Rect(origin_x + tile.x * TILE_SIZE, origin_y + tile.y * TILE_SIZE, TILE_SIZE, TILE_SIZE)
@@ -1077,12 +1296,39 @@ class Game:
                 bed = self.sprites.get("bed")
                 if bed:
                     self.screen.blit(bed, rect)
+            elif tile.special == "quest":
+                npc = self.sprites.get("lumberjack")
+                if npc:
+                    self.screen.blit(npc, rect)
 
             if tile.building:
-                key = "cabin" if tile.building == "cabane" else "workshop" if tile.building == "atelier" else "watch"
-                sprite = self.sprites.get(key)
+                key_map = {
+                    "cabane": "cabin",
+                    "cabane_t2": "cabin",
+                    "cabane_t3": "cabin",
+                    "atelier": "workshop",
+                    "tour": "watch",
+                    "barrel": f"barrel_t{tile.building_tier}",
+                    "fence": "fence",
+                    "flower": "flower",
+                    "fountain": "fountain",
+                    "color_tile": "color_tile",
+                }
+                key = key_map.get(tile.building)
+                sprite = self.sprites.get(key) if key else None
                 if sprite:
                     self.screen.blit(sprite, rect)
+                if tile.building == "barrel":
+                    fill = 0.0
+                    if self.state.gold_max > 0:
+                        fill = min(1.0, self.state.inventory.get("gold", 0) / self.state.gold_max)
+                    gauge = pygame.Rect(rect.x + 6, rect.bottom - 10, rect.width - 12, 6)
+                    pygame.draw.rect(self.screen, (30, 30, 30), gauge)
+                    pygame.draw.rect(
+                        self.screen,
+                        (220, 200, 90),
+                        (gauge.x, gauge.y, int(gauge.width * fill), gauge.height),
+                    )
 
             if tile.has_tree:
                 self.draw_tree(rect, tile)
