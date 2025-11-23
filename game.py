@@ -1,7 +1,7 @@
 import json
 import math
 import random
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -199,6 +199,8 @@ class Tile:
     special: Optional[str] = None  # computer or bed
     event: Optional[str] = None  # story or random event
     building: Optional[str] = None  # cabane, atelier, tour
+    damage: float = 0.0
+    building_progress: float = 1.0
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -206,6 +208,23 @@ class Tile:
     @staticmethod
     def from_dict(data: dict) -> "Tile":
         return Tile(**data)
+
+
+@dataclass
+class Task:
+    kind: str
+    target: Optional[Tuple[int, int]] = None
+    weight: float = 1.0
+    duration: float = 2.0
+    progress: float = 0.0
+    assigned: bool = False
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @staticmethod
+    def from_dict(data: dict) -> "Task":
+        return Task(**data)
 
 
 @dataclass
@@ -217,6 +236,19 @@ class Lumberjack:
     friendly: bool = True
     chop_duration: float = 0.0
     health: int = 3
+    task_queue: List["Task"] = field(default_factory=list)
+    current_task: Optional["Task"] = None
+
+    def enqueue_task(self, task: "Task") -> None:
+        self.task_queue.append(task)
+
+    def next_task(self) -> Optional["Task"]:
+        if self.current_task:
+            return self.current_task
+        if self.task_queue:
+            self.current_task = self.task_queue.pop(0)
+            return self.current_task
+        return None
 
     def position(self) -> Tuple[int, int]:
         return self.x, self.y
@@ -239,6 +271,7 @@ class GameState:
         self.selling_dialog = False
         self.pending_sale: Optional[dict] = None
         self.event_timer = 0.0
+        self.task_board: List[Task] = []
         self.load_or_init_tiles()
         self.active_task = "Chargement auto" if SAVE_FILE.exists() else "Nouvelle partie"
 
@@ -304,6 +337,7 @@ class GameState:
         self.season_time = (self.season_time + dt) % (SEASON_LENGTH_SECONDS * 4)
         if self.season_time % SEASON_LENGTH_SECONDS < dt:
             self.roll_weather()
+        self.maintain_buildings(dt)
 
     def update_events(self, dt: float) -> None:
         self.event_timer += dt
@@ -341,6 +375,19 @@ class GameState:
         options = ["Soleil", "Pluie", "Neige", "Brouillard"]
         self.weather = random.choice(options)
 
+    def maintain_buildings(self, dt: float) -> None:
+        for tile in self.tiles.values():
+            if not tile.building:
+                continue
+            decay = dt / 9000
+            if tile.has_dust:
+                decay += dt / 4000
+            tile.damage = min(1.0, tile.damage + decay)
+            if tile.damage > 0.4 and random.random() < 0.0008:
+                tile.has_dust = True
+            if tile.building_progress < 1.0:
+                tile.building_progress = min(1.0, tile.building_progress + dt / 120)
+
     def toggle_cleaner(self) -> None:
         self.cleaning_tool = not self.cleaning_tool
 
@@ -373,6 +420,7 @@ class GameState:
         tile.building = building
         tile.has_tree = False
         tile.tree_growth = 0.0
+        tile.building_progress = 0.35
         self.active_task = f"Construit {building}"
 
     def sell_resources(self) -> None:
@@ -405,10 +453,11 @@ class GameState:
             "season_time": self.season_time,
             "weather": self.weather,
             "screen": [self.screen_width, self.screen_height],
-            "lumberjacks": [asdict(l) for l in self.lumberjacks],
+            "lumberjacks": [self.serialize_lumberjack(l) for l in self.lumberjacks],
             "active_task": self.active_task,
             "active_tool": self.active_tool,
             "build_selection": self.build_selection,
+            "task_board": [t.to_dict() for t in self.task_board],
         }
         SAVE_FILE.write_text(json.dumps(data, indent=2))
 
@@ -422,13 +471,30 @@ class GameState:
         self.screen_width, self.screen_height = data.get("screen", [800, 600])
         lumber_data = data.get("lumberjacks", [])
         if lumber_data:
-            self.lumberjacks = [Lumberjack(**l) for l in lumber_data]
+            self.lumberjacks = [self.deserialize_lumberjack(l) for l in lumber_data]
         else:
             self.lumberjacks = [Lumberjack(0.0, 0.0)]
         self.active_task = data.get("active_task", "Achat de terrain")
         self.active_tool = data.get("active_tool", "buy")
         self.build_selection = data.get("build_selection", 0)
+        self.task_board = [Task.from_dict(t) for t in data.get("task_board", [])]
         self.queue_neighbors()
+
+    def serialize_lumberjack(self, lumberjack: Lumberjack) -> dict:
+        data = asdict(lumberjack)
+        data["task_queue"] = [t.to_dict() for t in lumberjack.task_queue]
+        data["current_task"] = lumberjack.current_task.to_dict() if lumberjack.current_task else None
+        return data
+
+    def deserialize_lumberjack(self, data: dict) -> Lumberjack:
+        task_queue = [Task.from_dict(t) for t in data.get("task_queue", [])]
+        current_task = Task.from_dict(data["current_task"]) if data.get("current_task") else None
+        known_keys = {"x", "y", "target", "chopping", "friendly", "chop_duration", "health"}
+        values = {k: v for k, v in data.items() if k in known_keys}
+        lumberjack = Lumberjack(**values)
+        lumberjack.task_queue = task_queue
+        lumberjack.current_task = current_task
+        return lumberjack
 
     def queue_neighbors(self) -> None:
         # always create a one-tile buffer around owned land for infinite feel
@@ -455,6 +521,63 @@ class GameState:
         elif tile.event == "ennemi":
             tile.has_dust = True
             self.lumberjacks.append(Lumberjack(tile.x + 0.2, tile.y + 0.2, friendly=False))
+
+    def find_storage_tile(self) -> Optional[Tile]:
+        for tile in self.tiles.values():
+            if tile.special == "computer":
+                return tile
+        return self.get_tile(0, 0, create=False)
+
+    def refresh_task_board(self) -> None:
+        tasks: List[Task] = []
+        patrol_targets: List[Tuple[int, int]] = []
+        for tile in self.tiles.values():
+            if tile.has_tree and not tile.has_dust and tile.owned:
+                weight = 1.0 + {"medium": 0.4, "large": 0.8}.get(tile.tree_type, 0.0)
+                duration = {"small": SMALL_CHOP, "medium": MEDIUM_CHOP, "large": LARGE_CHOP}.get(
+                    tile.tree_type, MEDIUM_CHOP
+                )
+                tasks.append(Task("chop_tree", (tile.x, tile.y), weight=weight, duration=duration))
+            if tile.building and (tile.damage > 0.05 or tile.has_dust):
+                tasks.append(Task("repair_building", (tile.x, tile.y), weight=1.5 + tile.damage, duration=3.0))
+            if tile.building and tile.building_progress < 0.99:
+                tasks.append(
+                    Task(
+                        "assist_construction",
+                        (tile.x, tile.y),
+                        weight=1.4 + (1 - tile.building_progress),
+                        duration=2.5,
+                    )
+                )
+            if tile.owned and not tile.has_tree and tile.tree_growth < 0.6 and not tile.building:
+                tasks.append(
+                    Task(
+                        "tend_plants",
+                        (tile.x, tile.y),
+                        weight=0.8 + (0.6 - tile.tree_growth),
+                        duration=2.2,
+                    )
+                )
+            if tile.owned:
+                for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    neighbor = self.get_tile(tile.x + dx, tile.y + dy, create=False)
+                    if not neighbor or not neighbor.owned:
+                        patrol_targets.append((tile.x, tile.y))
+                        break
+        storage = self.find_storage_tile()
+        resource_count = self.inventory.get("wood", 0) + self.inventory.get("dust", 0)
+        if storage and resource_count >= 4:
+            tasks.append(
+                Task(
+                    "haul_storage",
+                    (storage.x, storage.y),
+                    weight=1.2 + resource_count * 0.05,
+                    duration=3.0,
+                )
+            )
+        for x, y in patrol_targets[:5]:
+            tasks.append(Task("patrol_fence", (x, y), weight=0.5, duration=1.2))
+        self.task_board = tasks
 
 
 class Game:
@@ -574,6 +697,7 @@ class Game:
         self.state.update_trees(dt)
         self.state.update_time(dt)
         self.state.update_events(dt)
+        self.state.refresh_task_board()
         self.update_lumberjacks(dt)
         self.animation_timer += dt
         self.autosave_timer += dt
@@ -583,7 +707,6 @@ class Game:
             self.state.active_task = "Autosave"
 
     def update_lumberjacks(self, dt: float) -> None:
-        targets = [t for t in self.state.tiles.values() if t.has_tree and not t.has_dust and t.owned]
         enemies = [l for l in self.state.lumberjacks if not l.friendly]
         friends = [l for l in self.state.lumberjacks if l.friendly]
         # friendly units protect first
@@ -604,6 +727,7 @@ class Game:
                     tile = self.state.get_tile(*lumberjack.target, create=False)
                     if tile:
                         self.handle_chop_result(lumberjack, tile)
+                        lumberjack.current_task = None
                 continue
 
             if lumberjack.friendly and enemies:
@@ -621,36 +745,39 @@ class Game:
                     continue
                 lumberjack.x += (dx / dist) * speed * dt
                 lumberjack.y += (dy / dist) * speed * dt
+                self.state.active_task = "Patrouille de défense"
                 continue
 
-            if lumberjack.target:
-                target_tile = self.state.get_tile(*lumberjack.target, create=False)
+            task = lumberjack.next_task()
+            if not task or not self.is_task_valid(task):
+                lumberjack.current_task = None
+                task = self.assign_task_to_lumberjack(lumberjack)
+                if not task:
+                    continue
+
+            if task.target:
+                target_tile = self.state.get_tile(*task.target, create=False)
+                if not target_tile:
+                    lumberjack.current_task = None
+                    continue
             else:
                 target_tile = None
 
-            if lumberjack.target and (not target_tile or not target_tile.has_tree):
-                lumberjack.target = None
-
-            if not lumberjack.target:
-                if not targets:
-                    continue
-                target_tile = min(targets, key=lambda t: abs(t.x - lumberjack.x) + abs(t.y - lumberjack.y))
-                lumberjack.target = (target_tile.x, target_tile.y)
+            if task.kind == "chop_tree" and target_tile and not target_tile.has_tree:
+                lumberjack.current_task = None
                 continue
 
-            tx, ty = lumberjack.target
+            tx, ty = task.target if task.target else (lumberjack.x, lumberjack.y)
             dx = tx - lumberjack.x
             dy = ty - lumberjack.y
             dist = math.hypot(dx, dy)
-            speed = 1.2  # tiles per second
-            if dist < 0.05:
-                tile = self.state.get_tile(tx, ty)
-                chop_time = {"small": SMALL_CHOP, "medium": MEDIUM_CHOP, "large": LARGE_CHOP}.get(tile.tree_type, MEDIUM_CHOP)
-                lumberjack.chopping = chop_time
-                lumberjack.chop_duration = chop_time
+            speed = 1.0 + task.weight * 0.2
+            if dist > 0.05:
+                lumberjack.x += (dx / max(dist, 0.001)) * speed * dt
+                lumberjack.y += (dy / max(dist, 0.001)) * speed * dt
                 continue
-            lumberjack.x += (dx / dist) * speed * dt
-            lumberjack.y += (dy / dist) * speed * dt
+
+            self.resolve_task(lumberjack, task, target_tile, dt)
 
     def handle_chop_result(self, lumberjack: Lumberjack, tile: Tile) -> None:
         if lumberjack.friendly:
@@ -659,8 +786,110 @@ class Game:
             tile.has_tree = False
             tile.tree_growth = 0.0
             tile.has_dust = True
+            tile.damage = min(1.0, tile.damage + 0.4)
             self.state.inventory["gold"] = max(0, self.state.inventory["gold"] - 2)
             self.state.active_task = "Ennemi sabote"
+
+    def assign_task_to_lumberjack(self, lumberjack: Lumberjack) -> Optional[Task]:
+        if not self.state.task_board:
+            return None
+        candidates = [t for t in self.state.task_board if self.is_task_valid(t)]
+        if not candidates:
+            return None
+        def priority(task: Task) -> float:
+            tx, ty = task.target if task.target else (lumberjack.x, lumberjack.y)
+            dist = math.hypot(tx - lumberjack.x, ty - lumberjack.y)
+            return task.weight - dist * 0.05
+
+        best = max(candidates, key=priority)
+        task_copy = Task.from_dict(best.to_dict())
+        pending = [c for c in candidates if c is not best]
+        if not lumberjack.task_queue and pending:
+            follow_up = max(pending, key=priority)
+            lumberjack.task_queue.append(Task.from_dict(follow_up.to_dict()))
+        lumberjack.current_task = task_copy
+        lumberjack.target = task_copy.target
+        return task_copy
+
+    def is_task_valid(self, task: Task) -> bool:
+        if task.kind == "haul_storage":
+            return (self.state.inventory.get("wood", 0) + self.state.inventory.get("dust", 0)) > 0
+        if not task.target:
+            return True
+        tile = self.state.get_tile(*task.target, create=False)
+        if not tile:
+            return False
+        if task.kind == "chop_tree":
+            return tile.has_tree and tile.owned and not tile.has_dust
+        if task.kind == "repair_building":
+            return bool(tile.building) and (tile.damage > 0.05 or tile.has_dust)
+        if task.kind == "assist_construction":
+            return bool(tile.building) and tile.building_progress < 1.0
+        if task.kind == "tend_plants":
+            return tile.owned and not tile.has_tree and tile.tree_growth < 1.0 and not tile.building
+        if task.kind == "patrol_fence":
+            return tile.owned
+        return True
+
+    def resolve_task(self, lumberjack: Lumberjack, task: Task, tile: Optional[Tile], dt: float) -> None:
+        if task.kind == "chop_tree":
+            if tile and tile.has_tree:
+                lumberjack.chopping = task.duration
+                lumberjack.chop_duration = task.duration
+                self.state.active_task = "Bûcheronnage assisté"
+            else:
+                lumberjack.current_task = None
+            return
+
+        if task.kind == "haul_storage":
+            task.progress += dt
+            if task.progress >= task.duration:
+                delivered_wood = min(3, self.state.inventory.get("wood", 0))
+                delivered_dust = min(2, self.state.inventory.get("dust", 0))
+                self.state.inventory["wood"] -= delivered_wood
+                self.state.inventory["dust"] -= delivered_dust
+                self.state.inventory["gold"] += delivered_wood + delivered_dust
+                self.state.active_task = "Ravitaille au dépôt"
+                lumberjack.current_task = None
+            return
+
+        if task.kind == "repair_building" and tile:
+            task.progress += dt
+            if task.progress >= task.duration:
+                tile.damage = max(0.0, tile.damage - 0.6)
+                tile.has_dust = False
+                self.state.active_task = "Réparation"
+                lumberjack.current_task = None
+            return
+
+        if task.kind == "tend_plants" and tile:
+            task.progress += dt
+            if task.progress >= task.duration:
+                tile.tree_growth = min(1.0, tile.tree_growth + 0.35)
+                if tile.tree_growth >= 1.0:
+                    tile.has_tree = True
+                    tile.tree_type = "small"
+                self.state.active_task = "Entretien des sols"
+                lumberjack.current_task = None
+            return
+
+        if task.kind == "patrol_fence":
+            task.progress += dt
+            if task.progress >= task.duration:
+                self.state.active_task = "Patrouille clôture"
+                lumberjack.current_task = None
+            return
+
+        if task.kind == "assist_construction" and tile:
+            task.progress += dt
+            if task.progress >= task.duration:
+                tile.building_progress = min(1.0, tile.building_progress + 0.4)
+                tile.damage = max(0.0, tile.damage - 0.1)
+                self.state.active_task = "Aide chantier"
+                lumberjack.current_task = None
+            return
+
+        lumberjack.current_task = None
 
     def draw(self) -> None:
         self.screen.fill((40, 44, 52))
@@ -898,10 +1127,35 @@ class Game:
             )
             sprite_key = "lumberjack" if lumberjack.friendly else "enemy"
             sprite = self.sprites.get(sprite_key)
+            task = lumberjack.current_task
             if sprite:
                 wobble = 2 if (self.animation_timer % 0.6 < 0.3) else 0
+                if task:
+                    wobble = 3 if task.kind in ("haul_storage", "patrol_fence") else wobble
+                    wobble = 1 if task.kind == "repair_building" else wobble
                 jiggle = pygame.Rect(rect.x, rect.y + wobble, rect.width, rect.height)
                 self.screen.blit(sprite, jiggle)
+            if task:
+                icon = {
+                    "chop_tree": "🪓",
+                    "haul_storage": "📦",
+                    "repair_building": "🛠",
+                    "tend_plants": "🌱",
+                    "patrol_fence": "🛡",
+                    "assist_construction": "🏗",
+                }.get(task.kind, "⚙")
+                bubble = pygame.Rect(rect.x - 2, rect.y - 18, rect.width + 4, 16)
+                pygame.draw.rect(self.screen, (28, 34, 40), bubble, border_radius=4)
+                pygame.draw.rect(self.screen, (120, 170, 200), bubble, 1, border_radius=4)
+                label = self.font.render(icon, True, (230, 230, 230))
+                self.screen.blit(label, (bubble.x + 4, bubble.y + 1))
+                if task.progress > 0:
+                    pct = min(1.0, task.progress / max(task.duration, 0.0001))
+                    pygame.draw.rect(
+                        self.screen,
+                        (120, 200, 150),
+                        (bubble.x + 20, bubble.y + 10, int((bubble.width - 24) * pct), 4),
+                    )
             if lumberjack.chopping > 0:
                 bar = pygame.Rect(rect.x, rect.y - 6, rect.width, 4)
                 duration = max(lumberjack.chop_duration, SMALL_CHOP)
